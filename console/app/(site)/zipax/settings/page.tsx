@@ -130,9 +130,9 @@ function ShareForm({
   const chosen = new Set(initial?.publicDims ?? []);
   const isOn = Boolean(initial?.publicSlug) && chosen.size > 0;
   // Defaults for a brand-new publish: show the display name, show overall
-  // and sessions, and stay off the leaderboard. Everything the dev leaves
-  // untouched is explicitly private.
-  const leaderboardOptIn = initial?.leaderboardOptIn ?? false;
+  // and sessions, and appear on the leaderboard (opt-out). Everything else the
+  // dev leaves untouched stays private.
+  const leaderboardOptIn = initial?.leaderboardOptIn ?? true;
   const showDisplayName = initial?.showDisplayName ?? true;
   const showMeanScore = initial?.showMeanScore ?? true;
   const showSessions = initial?.showSessions ?? true;
@@ -202,7 +202,7 @@ function ShareForm({
               />
               <span>
                 List me on the public leaderboard
-                <span className="muted small"> — off by default. When off, your /p/{"{slug}"} page still works for people with the link.</span>
+                <span className="muted small"> — on by default for a public profile. Untick to keep your /p/{"{slug}"} page working for people with the link while staying off the leaderboard.</span>
               </span>
             </label>
             <label className="check">
