@@ -53,7 +53,7 @@ export function GetStarted({ clients, showAlways }: Props) {
           <Mark done={hasScan} n={2} />
           <div>
             <h3>Install the scanner on a laptop</h3>
-            <p className="muted">Open the client, create an upload token, and run the one-line install for Windows, macOS or Linux. Push it through your RMM when you&apos;re ready to roll out.</p>
+            <p className="muted">Open the client, create an upload token, and run the one-line install for Windows or Linux (macOS coming soon). Push it through your RMM when you&apos;re ready to roll out.</p>
             {hasClient && !hasScan && (
               <p><Link className="btn primary" href={firstClientHref}>Open {first?.name ?? "the client"} to get the install command</Link></p>
             )}

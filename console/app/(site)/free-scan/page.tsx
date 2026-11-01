@@ -48,7 +48,7 @@ export default async function FreeScan({ searchParams }: { searchParams: Promise
             </li>
             <li>
               <b>Run the scanner</b>
-              <span>One-line install for Windows (PowerShell), macOS and Linux. Push it through your RMM or run it by hand.</span>
+              <span>One-line install for Windows (PowerShell) and Linux. Push it through your RMM or run it by hand. macOS build coming soon.</span>
             </li>
             <li>
               <b>Read the findings</b>
