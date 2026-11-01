@@ -23,7 +23,7 @@ export default async function Docs() {
           <a href="#start">Getting started</a>
           <a href="#rmm">Install with your RMM</a>
           <a href="#windows">Windows script</a>
-          <a href="#unix">macOS and Linux script</a>
+          <a href="#unix">Linux script</a>
           <a href="#manual">Run it by hand</a>
           <a href="#fix">Fix plain-text keys</a>
           <a href="#rotate">Replace exposed keys</a>
@@ -60,8 +60,8 @@ export default async function Docs() {
           <p>Download <a href="/download/install-windows.ps1">install-windows.ps1</a>. Add <code>-Schedule</code> to run it daily at 10:00.</p>
           <pre>{"powershell -ExecutionPolicy Bypass -File install-windows.ps1 -Schedule"}</pre>
 
-          <h3 id="unix">macOS and Linux</h3>
-          <p>Download <a href="/download/install-unix.sh">install-unix.sh</a>. Set <code>ZINLOOP_SCHEDULE=1</code> to run it daily.</p>
+          <h3 id="unix">Linux</h3>
+          <p>Download <a href="/download/install-unix.sh">install-unix.sh</a>. Set <code>ZINLOOP_SCHEDULE=1</code> to run it daily. A signed and notarized macOS build is coming soon.</p>
           <pre>{`sudo ZINLOOP_CONSOLE_URL=${base} ZINLOOP_TOKEN=zlu_... ZINLOOP_SCHEDULE=1 sh install-unix.sh`}</pre>
 
           <h2 id="manual">Run it by hand</h2>

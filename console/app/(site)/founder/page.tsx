@@ -102,7 +102,8 @@ export default function FounderPage() {
           <b>A laptop scanner</b> &mdash; <code>zinloop install</code> &mdash; discovers
           every MCP server configured on a device, extracts the scopes and references
           the API keys (never the raw secret), and maps which SaaS systems each agent can
-          touch. Windows, macOS, Linux. Runs as a service. Daily by default.
+          touch. Windows and Linux today; a signed macOS build is coming soon. Runs as a
+          service. Daily by default.
         </p>
         <p>
           <b>An M365 / Entra read-only connector</b> that pulls the same picture from the
@@ -131,7 +132,7 @@ export default function FounderPage() {
           </div>
           <div className="nowcard">
             <span className="k">Scanner</span>
-            <span className="v">Windows / macOS / Linux, v0.1.0</span>
+            <span className="v">Windows &amp; Linux live, macOS coming soon &middot; v0.1.0</span>
           </div>
           <div className="nowcard">
             <span className="k">Design partners</span>
