@@ -10,6 +10,7 @@ import { notFound } from "next/navigation";
 import {
   DIMENSION_LABEL,
   readPublicProfile,
+  toolLabel,
 } from "@/lib/zipax.ts";
 
 export const dynamic = "force-dynamic";
@@ -28,12 +29,28 @@ export default async function PublicProfile({ params }: { params: Promise<{ slug
   const { slug } = await params;
   const view = await readPublicProfile(slug);
   if (!view) return notFound();
+  const otherTools = Object.entries(view.toolSessions)
+    .filter(([t]) => t !== view.primaryTool)
+    .sort((a, b) => b[1] - a[1])
+    .map(([t]) => t);
   return (
     <div className="wrap narrow">
       <h1>{view.displayName}</h1>
+      {view.primaryTool ? (
+        <p className="profile-agent">
+          <span className={`agent-badge agent-${view.primaryTool}`}>
+            {toolLabel(view.primaryTool)}
+          </span>
+          {otherTools.length > 0 ? (
+            <span className="muted small">
+              {" "}also uses {otherTools.map(toolLabel).join(", ")}
+            </span>
+          ) : null}
+        </p>
+      ) : null}
       <p className="muted">
         Builder profile — public view. The developer picks which dimensions appear here. Scores are
-        computed on the developer's laptop from Claude Code sessions and never include prompts or
+        computed on the developer's laptop from their coding sessions and never include prompts or
         code.
       </p>
       <div className="profile-bars">
