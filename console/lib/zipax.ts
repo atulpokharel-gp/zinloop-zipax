@@ -12,6 +12,22 @@ import { sign, verifySigned } from "./crypto.ts";
 export const KNOWN_TOOLS = ["claude-code", "codex", "aider", "cursor", "copilot"] as const;
 export type Tool = (typeof KNOWN_TOOLS)[number];
 
+/** Human-readable label for an AI coding agent as it appears on leaderboard
+ * rows and profile pages. Falls back to the raw string for anything the
+ * scanner uploads that isn't in KNOWN_TOOLS. */
+export const TOOL_LABEL: Record<string, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+  aider: "Aider",
+  copilot: "Copilot",
+};
+
+export function toolLabel(tool: string | null | undefined): string {
+  if (!tool) return "—";
+  return TOOL_LABEL[tool] ?? tool;
+}
+
 /** The five builder-profile dimensions. Keep in sync with scanner/internal/zipax/profile.go. */
 export const DIMENSIONS = [
   "steering",
@@ -967,6 +983,12 @@ export interface PublicProfileView {
   displayName: string;
   dims: DimensionAggregate[];
   showSessions: boolean;
+  // The AI coding agent this profile belongs to. `primaryTool` is the
+  // tool with the most sessions in the window; `toolSessions` is the
+  // full map (tool -> sessions over the window). Never covered by
+  // show_display_name — it is a label, not PII.
+  primaryTool: string | null;
+  toolSessions: Record<string, number>;
 }
 
 /** Reads a public profile by slug. Returns null for unknown or empty. */
@@ -981,7 +1003,9 @@ export async function readPublicProfile(slug: string, days = 30, now = new Date(
     show_display_name: boolean;
     show_mean_score: boolean;
     show_sessions: boolean;
-  }>("select * from zipax_public_profile($1)", [slug]);
+    primary_tool: string | null;
+    tool_sessions: Record<string, number | string> | null;
+  }>("select * from zipax_public_profile_v2($1, $2)", [slug, days]);
   if (!owner) return null;
   const allowed = new Set(owner.public_dims.filter((d) => DIMENSION_SET.has(d)));
   if (allowed.size === 0) return null;
@@ -992,10 +1016,17 @@ export async function readPublicProfile(slug: string, days = 30, now = new Date(
   const displayName = owner.show_display_name
     ? owner.display_name || reading.userLabel
     : ANONYMOUS_LABEL;
+  const toolSessions: Record<string, number> = {};
+  for (const [k, v] of Object.entries(owner.tool_sessions ?? {})) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) toolSessions[k] = Math.trunc(n);
+  }
   return {
     displayName,
     dims: reading.dims.filter((d) => allowed.has(d.dimension)),
     showSessions: owner.show_sessions,
+    primaryTool: owner.primary_tool || null,
+    toolSessions,
   };
 }
 
@@ -1067,6 +1098,13 @@ export interface LeaderboardRow {
   dimScores: Partial<Record<Dimension, number>>;
   meanScore: number;
   sessions: number;
+  // The AI coding agent this developer works with. `primaryTool` is the
+  // tool that produced the most sessions in the window; `toolSessions`
+  // is the full map so the UI can hint at secondary agents too. These
+  // never carry PII and so are shown on every row, including anonymous
+  // ones — only `displayName` is subject to show_display_name.
+  primaryTool: string | null;
+  toolSessions: Record<string, number>;
   // Per-row toggles the public page honours. The cross-tenant leaderboard
   // only ever includes rows the dev opted in to; these decide which
   // columns the row surfaces.
@@ -1080,7 +1118,12 @@ export interface LeaderboardRow {
  * zipax_public_leaderboard, which aggregates scores server-side and never
  * returns anything outside what the dev already published on /p/{slug}.
  */
-export async function readPublicLeaderboard(days = 30, limit = 100): Promise<LeaderboardRow[]> {
+export async function readPublicLeaderboard(
+  days = 30,
+  limit = 100,
+  onlyTool: string = "",
+): Promise<LeaderboardRow[]> {
+  const tool = onlyTool.toLowerCase().trim();
   const rows = (
     await getPool().query<{
       user_hash: string;
@@ -1093,7 +1136,9 @@ export async function readPublicLeaderboard(days = 30, limit = 100): Promise<Lea
       dim_scores: Record<string, number> | null;
       mean_score: number;
       sessions_counted: number;
-    }>("select * from zipax_public_leaderboard($1, $2)", [days, limit])
+      primary_tool: string | null;
+      tool_sessions: Record<string, number | string> | null;
+    }>("select * from zipax_public_leaderboard($1, $2, $3)", [days, limit, tool])
   ).rows;
   return rows.map((r) =>
     shapeLeaderboardRow({
@@ -1110,6 +1155,8 @@ export async function readPublicLeaderboard(days = 30, limit = 100): Promise<Lea
       sessions_counted: r.sessions_counted,
       show_mean_score: r.show_mean_score,
       show_sessions: r.show_sessions,
+      primary_tool: r.primary_tool,
+      tool_sessions: r.tool_sessions,
     }),
   );
 }
@@ -1125,8 +1172,11 @@ export async function readCompanyLeaderboard(
   tenant: Tenant,
   days = 30,
   limit = 200,
+  onlyTool: string = "",
 ): Promise<LeaderboardRow[]> {
   const since = sinceDay(days, new Date());
+  const tool = onlyTool.toLowerCase().trim();
+  const toolFilter = tool === "" ? null : tool;
   return withTenant(tenant, async (db) => {
     const rows = (
       await db.query<{
@@ -1140,6 +1190,8 @@ export async function readCompanyLeaderboard(
         public_dims: string[] | null;
         show_mean_score: boolean | null;
         show_sessions: boolean | null;
+        primary_tool: string | null;
+        tool_sessions: Record<string, number | string> | null;
       }>(
         `with scored as (
            select user_hash,
@@ -1149,6 +1201,7 @@ export async function readCompanyLeaderboard(
                   sum(sessions)::int as sessions
              from zipax_profile_scores
              where bucket_day >= $1
+               and ($3::text is null or tool = $3)
              group by user_hash, dimension
          ),
          per_user as (
@@ -1158,6 +1211,20 @@ export async function readCompanyLeaderboard(
                   round(avg(score))::int as mean_score,
                   sum(sessions)::int    as sessions_counted
              from scored
+             group by user_hash
+         ),
+         tools as (
+           select user_hash, tool, sum(sessions)::bigint as sessions
+             from zipax_profile_scores
+             where bucket_day >= $1
+               and ($3::text is null or tool = $3)
+             group by user_hash, tool
+         ),
+         tool_pick as (
+           select user_hash,
+                  coalesce(jsonb_object_agg(tool, sessions), '{}'::jsonb) as tool_sessions,
+                  (array_agg(tool order by sessions desc, tool asc))[1]   as primary_tool
+             from tools
              group by user_hash
          )
          select p.user_hash,
@@ -1169,12 +1236,15 @@ export async function readCompanyLeaderboard(
                 pr.display_name,
                 pr.public_dims,
                 pr.show_mean_score,
-                pr.show_sessions
+                pr.show_sessions,
+                tp.primary_tool,
+                coalesce(tp.tool_sessions, '{}'::jsonb) as tool_sessions
            from per_user p
            left join zipax_profile_prefs pr on pr.user_hash = p.user_hash
+           left join tool_pick tp on tp.user_hash = p.user_hash
           order by p.mean_score desc, p.sessions_counted desc, p.user_hash asc
           limit $2`,
-        [since, limit],
+        [since, limit, toolFilter],
       )
     ).rows;
     return rows.map((r) =>
@@ -1191,6 +1261,8 @@ export async function readCompanyLeaderboard(
         // RLS. We hand `true` through so the row renders every column.
         show_mean_score: true,
         show_sessions: true,
+        primary_tool: r.primary_tool,
+        tool_sessions: r.tool_sessions,
       }),
     );
   });
@@ -1206,10 +1278,17 @@ function shapeLeaderboardRow(r: {
   sessions_counted: number;
   show_mean_score: boolean;
   show_sessions: boolean;
+  primary_tool: string | null;
+  tool_sessions: Record<string, number | string> | null;
 }): LeaderboardRow {
   const dimScores: Partial<Record<Dimension, number>> = {};
   for (const [k, v] of Object.entries(r.dim_scores ?? {})) {
     if (DIMENSION_SET.has(k)) dimScores[k as Dimension] = clampScore(Number(v));
+  }
+  const toolSessions: Record<string, number> = {};
+  for (const [k, v] of Object.entries(r.tool_sessions ?? {})) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) toolSessions[k] = Math.trunc(n);
   }
   return {
     userHash: r.user_hash,
@@ -1219,6 +1298,8 @@ function shapeLeaderboardRow(r: {
     dimScores,
     meanScore: clampScore(Number(r.mean_score)),
     sessions: Number(r.sessions_counted) || 0,
+    primaryTool: r.primary_tool || null,
+    toolSessions,
     showMeanScore: r.show_mean_score,
     showSessions: r.show_sessions,
   };
