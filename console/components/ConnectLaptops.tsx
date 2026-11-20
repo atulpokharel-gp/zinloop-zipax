@@ -12,7 +12,7 @@ type OS = "windows" | "macos" | "linux";
 
 const OS_LABEL: Record<OS, string> = {
   windows: "Windows (PowerShell)",
-  macos: "macOS (Terminal)",
+  macos: "macOS · Coming soon",
   linux: "Linux (shell)",
 };
 
@@ -25,7 +25,10 @@ function installCommand(os: OS, consoleUrl: string, token: string): string {
       `iwr "${consoleUrl}/download/install-windows.ps1" -UseBasicParsing | iex`,
     ].join("\n");
   }
-  // One-liner for macOS and Linux. Pulls the install script and pipes to sh with env vars prefixed.
+  if (os === "macos") {
+    return "# macOS build is coming soon — a signed and notarized package is in progress.\n# For now, scan a Mac by running `zinloop` from a Linux or Windows jumpbox, or\n# open a saved scan.json from the laptop in the console under Open a scan file.";
+  }
+  // One-liner for Linux. Pulls the install script and pipes to sh with env vars prefixed.
   return `curl -fsSL "${consoleUrl}/download/install-unix.sh" | ZINLOOP_CONSOLE_URL="${consoleUrl}" ZINLOOP_TOKEN="${token}" sudo -E sh`;
 }
 
@@ -99,14 +102,16 @@ export function ConnectLaptops({ clientId, tokens, consoleUrl }: { clientId: str
           <button type="button" className="btn small copy" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
         </div>
         <p className="muted small">
-          {state.token
+          {os === "macos"
+            ? "A signed, notarized macOS build is coming soon. Until then, Windows and Linux are the supported install targets; a Mac can still be scanned by opening a saved scan.json."
+            : state.token
             ? "This command downloads the scanner, verifies its SHA-256, scans every user profile, and sends the report. Nothing changes on the laptop until a tech runs a fix."
             : <>Create a token above, then this command fills in <code>ZINLOOP_TOKEN</code>. Scanner is open source and verified by checksum.</>}
         </p>
         <p className="muted small">
           Prefer the raw scripts for your RMM? <a href={`${consoleUrl}/download/install-windows.ps1`}>install-windows.ps1</a>
           {" · "}
-          <a href={`${consoleUrl}/download/install-unix.sh`}>install-unix.sh</a>
+          <a href={`${consoleUrl}/download/install-unix.sh`}>install-unix.sh</a> (Linux)
           {" · "}
           Upload endpoint: <code>{uploadUrl}</code>
         </p>

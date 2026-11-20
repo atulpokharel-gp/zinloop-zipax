@@ -4,7 +4,10 @@ import { randomUUID } from "node:crypto";
 import { audit } from "./audit.ts";
 import { createSession, endAllSessions, type ClientInfo } from "./auth.ts";
 import { decrypt, encrypt } from "./crypto.ts";
-import { lookup, withTenant } from "./db.ts";
+import { type Db as Tx, lookup, withTenant } from "./db.ts";
+import { consumerDomains } from "./email-domains.ts";
+import { type AccountType, classifyAccount } from "./email-kind.ts";
+import { inviteEmail, passwordResetEmail } from "./email.ts";
 import { allow } from "./ratelimit.ts";
 import { hashPassword, newToken, tokenHash, verifyPassword } from "./secrets.ts";
 import { checkCode, newTotpSecret } from "./totp.ts";
@@ -58,33 +61,84 @@ export interface SignUp {
   wantsPartner?: boolean;
 }
 
-/** Creates an MSP on the free plan and its owner, and signs them in. Returns a session token. */
+export interface NewOwner {
+  mspId: string;
+  userId: string;
+  email: string;
+  name: string;
+  mspName: string;
+  accountType: AccountType;
+  /** null for an SSO-only account with no password yet. */
+  passwordHash: string | null;
+  clientEstimate?: number;
+  wantsPartner?: boolean;
+  ip?: string | null;
+  /** How they signed up, for the audit log: "password" or an SSO provider name. */
+  method?: string;
+}
+
+/**
+ * Inserts an MSP (free plan) and its owner inside an existing tenant
+ * transaction, and audits the sign-up. Shared by password sign-up (signUp) and
+ * SSO sign-up (identities.signUpWithGoogle) so the two can't drift. The caller
+ * opens the transaction with this mspId and starts the session afterwards; it
+ * also maps a unique-violation to a friendly "already an account" error.
+ */
+export async function insertOwnerAccount(db: Tx, a: NewOwner): Promise<void> {
+  const estimate = Math.min(Math.max(Math.floor(Number(a.clientEstimate) || 0), 0), 100_000);
+  await db.query("insert into msps (id, name, client_estimate, wants_partner, account_type) values ($1, $2, $3, $4, $5)", [
+    a.mspId,
+    a.mspName,
+    estimate,
+    Boolean(a.wantsPartner),
+    a.accountType,
+  ]);
+  await db.query(
+    "insert into users (id, msp_id, email, password_hash, name, role) values ($1, $2, $3, $4, $5, 'owner')",
+    [a.userId, a.mspId, a.email, a.passwordHash, a.name],
+  );
+  await audit(a.mspId, { userId: a.userId, email: a.email, ip: a.ip }, "signed_up", a.mspName, { accountType: a.accountType, method: a.method ?? "password" }, db);
+}
+
+/**
+ * Creates an MSP on the free plan and its owner, and signs them in. The account
+ * type is derived from the email: a free/consumer mailbox (gmail, outlook, …)
+ * signs up as an "individual" and doesn't need a company name (their own name is
+ * used); a company domain signs up as an "organization" and does. Returns a
+ * session token.
+ */
 export async function signUp(input: SignUp, ip: string | null = null): Promise<string> {
   const name = input.name.trim();
-  const mspName = input.mspName.trim();
   if (!name || name.length > 200) throw new AccountError("Enter your name.");
-  if (!mspName || mspName.length > 200) throw new AccountError("Enter your company's name.");
   const email = checkEmail(input.email);
+  const accountType = classifyAccount(email, await consumerDomains());
+  let mspName = input.mspName.trim();
+  if (mspName.length > 200) throw new AccountError("That company name is too long.");
+  if (accountType === "organization") {
+    if (!mspName) throw new AccountError("Enter your company's name.");
+  } else if (!mspName) {
+    mspName = name; // Individual: company name is optional, fall back to their own name.
+  }
   checkPassword(input.password);
   if (ip && !(await allow("signUpIp", ip))) throw new AccountError("Too many sign-ups from your network. Try again in an hour.");
-  const estimate = Math.min(Math.max(Math.floor(Number(input.clientEstimate) || 0), 0), 100_000);
   const mspId = randomUUID();
   const userId = randomUUID();
   const hash = await hashPassword(input.password);
   try {
-    await withTenant(mspId, async (db) => {
-      await db.query("insert into msps (id, name, client_estimate, wants_partner) values ($1, $2, $3, $4)", [
+    await withTenant(mspId, (db) =>
+      insertOwnerAccount(db, {
         mspId,
+        userId,
+        email,
+        name,
         mspName,
-        estimate,
-        Boolean(input.wantsPartner),
-      ]);
-      await db.query(
-        "insert into users (id, msp_id, email, password_hash, name, role) values ($1, $2, $3, $4, $5, 'owner')",
-        [userId, mspId, email, hash, name],
-      );
-      await audit(mspId, { userId, email, ip }, "signed_up", mspName, {}, db);
-    });
+        accountType,
+        passwordHash: hash,
+        clientEstimate: input.clientEstimate,
+        wantsPartner: input.wantsPartner,
+        ip,
+      }),
+    );
   } catch (err) {
     if (isUniqueViolation(err)) throw new AccountError("There's already an account for that email. Sign in instead.");
     throw err;
@@ -111,6 +165,7 @@ export interface PendingInvite {
 
 export interface Team {
   plan: Plan;
+  accountType: AccountType;
   requireMfa: boolean;
   members: Member[];
   invites: PendingInvite[];
@@ -118,7 +173,7 @@ export interface Team {
 
 export async function getTeam(mspId: string): Promise<Team> {
   return withTenant(mspId, async (db) => {
-    const msp = (await db.query<{ plan: Plan; require_mfa: boolean }>("select plan, require_mfa from msps")).rows[0];
+    const msp = (await db.query<{ plan: Plan; require_mfa: boolean; account_type: AccountType }>("select plan, require_mfa, account_type from msps")).rows[0];
     const plan = msp?.plan ?? "free";
     const members = (
       await db.query<{ id: string; name: string; email: string; role: TeamRole; mfa: boolean; created_at: Date }>(
@@ -130,7 +185,7 @@ export async function getTeam(mspId: string): Promise<Team> {
         "select id, email, expires_at from invites where role in ('member', 'technician') and accepted_at is null and expires_at > now() order by created_at",
       )
     ).rows.map((i) => ({ id: i.id, email: i.email, expiresAt: i.expires_at.toISOString() }));
-    return { plan, requireMfa: Boolean(msp?.require_mfa), members, invites };
+    return { plan, accountType: msp?.account_type ?? "organization", requireMfa: Boolean(msp?.require_mfa), members, invites };
   });
 }
 
@@ -164,13 +219,37 @@ async function makeInvite(mspId: string, invitedBy: string, email: string, ip: s
       if (!c) throw new AccountError("That client wasn't found.");
       clientName = c.name;
     }
-    await db.query(
-      `insert into invites (msp_id, email, token_hash, invited_by, expires_at, role, client_id)
-       values ($1, $2, $3, $4, now() + make_interval(days => $5), $6, $7)`,
-      [mspId, addr, tokenHash(token), invitedBy, INVITE_DAYS, inviteRole, clientId],
-    );
+    const inviteId = (
+      await db.query<{ id: string }>(
+        `insert into invites (msp_id, email, token_hash, invited_by, expires_at, role, client_id)
+         values ($1, $2, $3, $4, now() + make_interval(days => $5), $6, $7) returning id`,
+        [mspId, addr, tokenHash(token), invitedBy, INVITE_DAYS, inviteRole, clientId],
+      )
+    ).rows[0].id;
     if (clientId) await audit(mspId, { ...who, ip }, "client_login_created", addr, { clientId, client: clientName }, db);
     else await audit(mspId, { ...who, ip }, "invite_created", addr, { role: inviteRole }, db);
+
+    // Email the invite link through the outbox (scripts/send-mail.ts delivers
+    // it). Only with CONSOLE_URL set can we build an absolute link; without it
+    // (local dev) the owner uses the copy-link the action shows instead.
+    const base = process.env.CONSOLE_URL?.trim().replace(/\/+$/, "");
+    if (base) {
+      const mspName = (await db.query<{ name: string }>("select name from msps")).rows[0]?.name ?? "";
+      const inviterName = (await db.query<{ name: string }>("select name from users where id = $1", [invitedBy])).rows[0]?.name ?? null;
+      const mail = inviteEmail({
+        mspName,
+        inviterName,
+        clientName: clientId ? clientName : null,
+        role: inviteRole,
+        joinUrl: `${base}/join/${token}`,
+        expiresDays: INVITE_DAYS,
+      });
+      await db.query(
+        `insert into outbox (msp_id, dedupe_key, kind, invite_id, user_id, to_email, subject, body_text, body_html, unsubscribe_url)
+         values ($1, $2, 'invite', $3, null, $4, $5, $6, $7, '') on conflict (dedupe_key) do nothing`,
+        [mspId, `invite:${inviteId}`, inviteId, addr, mail.subject.slice(0, 300), mail.text, mail.html],
+      );
+    }
   });
   return token;
 }
@@ -325,6 +404,80 @@ export async function changePassword(mspId: string, userId: string, current: str
   // Sign out everywhere else, then give this browser a fresh session.
   await endAllSessions(mspId, userId);
   return createSession(userId, mspId, info);
+}
+
+/** How long a "forgot password" link is good for. */
+export const RESET_MINUTES = 60;
+
+/**
+ * Starts a password reset: if the address has an account, emails a single-use
+ * link that expires in RESET_MINUTES and invalidates any earlier link. Says
+ * nothing either way (the page always shows the same message) so it can't be
+ * used to learn which addresses have accounts. Needs CONSOLE_URL to build the
+ * link; without it (local dev) nothing is sent.
+ */
+export async function requestPasswordReset(email: string, ip: string | null = null): Promise<void> {
+  const addr = email.trim().toLowerCase();
+  if (!EMAIL.test(addr) || addr.length > 320) return;
+  if (!(await allow("passwordReset", addr))) return;
+  if (ip && !(await allow("passwordResetIp", ip))) return;
+  const base = process.env.CONSOLE_URL?.trim().replace(/\/+$/, "");
+  if (!base) return;
+  const user = await lookup<{ user_id: string; msp_id: string }>("select user_id, msp_id from auth_find_user($1)", [addr]);
+  if (!user) return;
+  const token = newToken("zlp");
+  await withTenant(user.msp_id, async (db) => {
+    // Only the newest link works: drop this user's earlier resets (which
+    // cascades their unsent reset emails away).
+    await db.query("delete from password_resets where user_id = $1", [user.user_id]);
+    const resetId = (
+      await db.query<{ id: string }>(
+        "insert into password_resets (msp_id, user_id, token_hash, expires_at) values ($1, $2, $3, now() + make_interval(mins => $4)) returning id",
+        [user.msp_id, user.user_id, tokenHash(token), RESET_MINUTES],
+      )
+    ).rows[0].id;
+    const mspName = (await db.query<{ name: string }>("select name from msps")).rows[0]?.name ?? "";
+    const to = (await db.query<{ email: string }>("select email from users where id = $1", [user.user_id])).rows[0]?.email ?? addr;
+    const mail = passwordResetEmail({ mspName, resetUrl: `${base}/reset/${token}`, expiresMinutes: RESET_MINUTES });
+    await db.query(
+      `insert into outbox (msp_id, dedupe_key, kind, reset_id, user_id, to_email, subject, body_text, body_html, unsubscribe_url)
+       values ($1, $2, 'reset', $3, null, $4, $5, $6, $7, '') on conflict (dedupe_key) do nothing`,
+      [user.msp_id, `reset:${resetId}`, resetId, to, mail.subject.slice(0, 300), mail.text, mail.html],
+    );
+    await audit(user.msp_id, { userId: user.user_id, email: to, ip }, "password_reset_requested", "", {}, db);
+  });
+}
+
+/** What a reset link is for, if it's still valid: whose account it changes. */
+export async function checkResetToken(token: string | undefined): Promise<{ email: string; mspName: string } | null> {
+  if (!token || !token.startsWith("zlp_")) return null;
+  const row = await lookup<{ email: string; msp_name: string }>("select email, msp_name from reset_check($1)", [tokenHash(token)]);
+  return row ? { email: row.email, mspName: row.msp_name } : null;
+}
+
+/**
+ * Sets a new password from a reset link and signs the account out everywhere.
+ * The person then signs in again, so an account with two-factor sign-in still
+ * has to pass it. Never returns a session.
+ */
+export async function resetPassword(token: string, next: string, info: ClientInfo = {}): Promise<void> {
+  const expired = new AccountError("This reset link has expired or was already used. Ask for a new one.");
+  if (!token || !token.startsWith("zlp_")) throw expired;
+  checkPassword(next);
+  const row = await lookup<{ reset_id: string; user_id: string; msp_id: string; email: string }>(
+    "select reset_id, user_id, msp_id, email from reset_check($1)",
+    [tokenHash(token)],
+  );
+  if (!row) throw expired;
+  const hash = await hashPassword(next);
+  await withTenant(row.msp_id, async (db) => {
+    // Consume the token first; if a racing request used it, stop here.
+    const used = await db.query("update password_resets set used_at = now() where id = $1 and used_at is null", [row.reset_id]);
+    if (used.rowCount !== 1) throw expired;
+    await db.query("update users set password_hash = $2 where id = $1", [row.user_id, hash]);
+    await audit(row.msp_id, { userId: row.user_id, email: row.email, ip: info.ip }, "password_reset", "", {}, db);
+  });
+  await endAllSessions(row.msp_id, row.user_id);
 }
 
 /** Starts two-factor setup: stores a new secret (not yet active) and returns it for the QR code. */

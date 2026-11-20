@@ -13,6 +13,7 @@ import { hasGoogleSso } from "@/lib/google-sso.ts";
 
 const SSO_NOTICE: Record<string, string> = {
   "not-linked": "That account isn't linked to a Zinloop login yet. Sign in with your password, then link it in your settings.",
+  exists: "You already have a Zinloop account for that email. Sign in with your password, then link Google in your settings.",
   failed: "That sign-in didn't work. Try again, or sign in with your password.",
   expired: "That sign-in took too long or was already used. Try again.",
   cancelled: "That sign-in was cancelled.",
@@ -23,13 +24,15 @@ const SSO_NOTICE: Record<string, string> = {
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Sign in" };
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ sso?: string }> }) {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ sso?: string; reset?: string }> }) {
   if (!hasDatabase()) redirect("/app"); // demo mode has no accounts
   {
     const s = await currentSession({ viewer: true });
     if (s) redirect(homeFor(s));
   }
-  const sso = SSO_NOTICE[(await searchParams).sso ?? ""];
+  const params = await searchParams;
+  const sso = SSO_NOTICE[params.sso ?? ""];
+  const resetDone = params.reset === "1";
   const pending = (await cookies()).get(MFA_COOKIE)?.value;
   const waitingForCode = hasAppSecret() && verifySigned("mfa", pending) !== null;
   return (
@@ -43,8 +46,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           </>
         ) : (
           <>
+            {resetDone && <p className="zok" role="status">Your password has been changed. Sign in with your new password.</p>}
             {sso && <p className="zerror" role="alert">{sso}</p>}
             <LoginForm />
+            <p className="small"><Link href="/forgot">Forgot your password?</Link></p>
             {hasSso() && hasAppSecret() && (
               <form method="post" action="/api/auth/microsoft/start" className="sso">
                 <input type="hidden" name="mode" value="signin" />

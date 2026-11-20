@@ -9,6 +9,8 @@ import { hasDatabase } from "@/lib/db.ts";
 import {
   DIMENSION_LABEL,
   DIMENSIONS,
+  KNOWN_TOOLS,
+  toolLabel,
   type Dimension,
   type LeaderboardRow,
   readPublicLeaderboard,
@@ -23,7 +25,7 @@ export const metadata: Metadata = {
 export default async function PublicLeaderboard({
   searchParams,
 }: {
-  searchParams: Promise<{ days?: string; dim?: string }>;
+  searchParams: Promise<{ days?: string; dim?: string; agent?: string }>;
 }) {
   if (!hasDatabase()) {
     return (
@@ -36,29 +38,43 @@ export default async function PublicLeaderboard({
   const q = await searchParams;
   const days = pickDays(q.days);
   const dim = pickDim(q.dim);
-  const rows = await readPublicLeaderboard(days, 100);
+  const agent = pickAgent(q.agent);
+  const rows = await readPublicLeaderboard(days, 100, agent);
   const ranked = sortByDim(rows, dim);
   return (
     <div className="wrap">
       <div className="page-head">
         <h1>Builder profile leaderboard</h1>
         <p className="muted">
-          Ranks developers by their opt-in Zipax builder-profile scores over the last {days} days.
-          Only people who turned a public profile on in{" "}
-          <Link href="/zipax/settings">Zipax settings</Link> appear here. Scores are computed on each
-          developer's laptop from local coding sessions — no prompts, no code, no project names.
+          Ranks developers and the AI coding agents they work with. Scores come from each
+          developer's opt-in Zipax builder profile over the last {days} days. Only people who
+          turned a public profile on in <Link href="/zipax/settings">Zipax settings</Link> appear
+          here. Scores are computed on each developer's laptop from local coding sessions — no
+          prompts, no code, no project names.
         </p>
-        <DimPicker current={dim} days={days} />
+        <AgentPicker current={agent} days={days} dim={dim} />
+        <DimPicker current={dim} days={days} agent={agent} />
       </div>
 
       {ranked.length === 0 ? (
         <section className="panel">
           <div className="panel-body">
-            <p className="empty">
-              Nobody has published a profile yet. Run <code>zinloop zipax</code> on your laptop, visit
-              the printed <code>/zipax/claim</code> URL, then turn public sharing on in{" "}
-              <Link href="/zipax/settings">Zipax settings</Link> to appear here.
-            </p>
+            {agent !== "" ? (
+              <p className="empty">
+                No published profiles for <strong>{toolLabel(agent)}</strong> in the last {days}
+                {" "}days.{" "}
+                <Link href={`/leaderboard${days !== 30 ? `?days=${days}` : ""}`}>
+                  See all agents
+                </Link>
+                .
+              </p>
+            ) : (
+              <p className="empty">
+                Nobody has published a profile yet. Run <code>zinloop zipax</code> on your laptop,
+                visit the printed <code>/zipax/claim</code> URL, then turn public sharing on in{" "}
+                <Link href="/zipax/settings">Zipax settings</Link> to appear here.
+              </p>
+            )}
           </div>
         </section>
       ) : (
@@ -85,6 +101,7 @@ function LeaderboardTable({
         <tr>
           <th className="num">#</th>
           <th>Developer</th>
+          <th>Agent</th>
           <th className="num">Overall</th>
           {DIMENSIONS.map((d) => (
             <th key={d} className={`num ${d === activeDim ? "active" : ""}`}>{DIMENSION_LABEL[d]}</th>
@@ -103,6 +120,7 @@ function LeaderboardTable({
                 <span>{r.displayName}</span>
               )}
             </td>
+            <td><AgentBadge primaryTool={r.primaryTool} toolSessions={r.toolSessions} /></td>
             <td className="num">
               {r.showMeanScore ? <ScorePill n={r.meanScore} /> : <span className="muted" title="Hidden by the developer">—</span>}
             </td>
@@ -125,12 +143,78 @@ function LeaderboardTable({
   );
 }
 
+function AgentBadge({
+  primaryTool,
+  toolSessions,
+}: {
+  primaryTool: string | null;
+  toolSessions: Record<string, number>;
+}) {
+  if (!primaryTool) return <span className="muted">—</span>;
+  const others = Object.entries(toolSessions)
+    .filter(([t]) => t !== primaryTool)
+    .sort((a, b) => b[1] - a[1])
+    .map(([t]) => toolLabel(t));
+  const title =
+    others.length > 0 ? `Primary agent — also uses ${others.join(", ")}` : "Primary coding agent";
+  return (
+    <span className={`agent-badge agent-${primaryTool}`} title={title}>
+      {toolLabel(primaryTool)}
+      {others.length > 0 ? <span className="agent-plus"> +{others.length}</span> : null}
+    </span>
+  );
+}
+
+function AgentPicker({
+  current,
+  days,
+  dim,
+}: {
+  current: string;
+  days: number;
+  dim: Dimension | "overall";
+}) {
+  const options: { value: string; label: string }[] = [
+    { value: "", label: "All agents" },
+    ...KNOWN_TOOLS.map((t) => ({ value: t, label: toolLabel(t) })),
+  ];
+  const href = (v: string) => {
+    const parts: string[] = [];
+    if (v !== "") parts.push(`agent=${encodeURIComponent(v)}`);
+    if (dim !== "overall") parts.push(`dim=${dim}`);
+    if (days !== 30) parts.push(`days=${days}`);
+    return parts.length ? `/leaderboard?${parts.join("&")}` : "/leaderboard";
+  };
+  return (
+    <div className="range-picker">
+      {options.map((o) => (
+        <Link
+          key={o.value || "all"}
+          href={href(o.value)}
+          className={o.value === current ? "range-on" : ""}
+          aria-current={o.value === current ? "page" : undefined}
+        >
+          {o.label}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 function ScorePill({ n }: { n: number }) {
   const band = n >= 75 ? "high" : n >= 50 ? "medium" : n >= 25 ? "low" : "none";
   return <span className={`pill ${band}`}>{n}</span>;
 }
 
-function DimPicker({ current, days }: { current: Dimension | "overall"; days: number }) {
+function DimPicker({
+  current,
+  days,
+  agent,
+}: {
+  current: Dimension | "overall";
+  days: number;
+  agent: string;
+}) {
   const options: { value: Dimension | "overall"; label: string }[] = [
     { value: "overall", label: "Overall" },
     ...DIMENSIONS.map((d) => ({ value: d, label: DIMENSION_LABEL[d] })),
@@ -139,6 +223,7 @@ function DimPicker({ current, days }: { current: Dimension | "overall"; days: nu
     const parts: string[] = [];
     if (v !== "overall") parts.push(`dim=${v}`);
     if (days !== 30) parts.push(`days=${days}`);
+    if (agent !== "") parts.push(`agent=${encodeURIComponent(agent)}`);
     return parts.length ? `/leaderboard?${parts.join("&")}` : "/leaderboard";
   };
   return (
@@ -167,6 +252,12 @@ function pickDim(raw: string | undefined): Dimension | "overall" {
   if (!raw) return "overall";
   const ok = (DIMENSIONS as readonly string[]).includes(raw);
   return ok ? (raw as Dimension) : "overall";
+}
+
+function pickAgent(raw: string | undefined): string {
+  if (!raw) return "";
+  const v = raw.toLowerCase().trim();
+  return (KNOWN_TOOLS as readonly string[]).includes(v) ? v : "";
 }
 
 function sortByDim(rows: LeaderboardRow[], dim: Dimension | "overall"): LeaderboardRow[] {

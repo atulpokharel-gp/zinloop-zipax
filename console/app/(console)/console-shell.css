@@ -72,6 +72,10 @@
 .download-platform span:last-child {font-size:.8rem;color:#9eaecc}
 .download-platform-symbol {display:flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:10px;background:#243152;color:#c9ff3b;font-size:1.5rem;margin-bottom:4px}
 .download-platform.selected {border-color:#c9ff3b;box-shadow:inset 0 0 0 1px #c9ff3b;background:#131f36}
+.download-platform.coming-soon {opacity:.78}
+.download-platform.coming-soon.selected {opacity:1;border-color:#3b5bff;box-shadow:inset 0 0 0 1px #3b5bff;background:#121b32}
+.download-platform.coming-soon .download-platform-symbol {background:#1b2440;color:#9eaecc}
+.download-badge {display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:#1b2440;border:1px solid #3b5bff;color:#c6d1ff;font-size:.68rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;vertical-align:middle}
 .download-package {display:grid;gap:18px;padding:25px;border:1px solid #27344f;border-radius:14px;background:#111a2c}
 .download-package h2 {font-size:1.3rem}
 .download-package p {line-height:1.6;color:#b6c3dd}

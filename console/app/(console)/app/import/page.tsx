@@ -78,7 +78,7 @@ export default function ImportPage() {
         <div className="panel-head"><h2>How to scan a computer</h2></div>
         <div style={{ padding: 16 }}>
           <ol className="steps">
-            <li>Download <code>zinloop</code> for Windows, Mac or Linux, or build it from the <code>scanner</code> folder with <code>go build ./cmd/zinloop</code>.</li>
+            <li>Download <code>zinloop</code> for Windows or Linux (macOS build coming soon), or build it from the <code>scanner</code> folder with <code>go build ./cmd/zinloop</code>.</li>
             <li>Run <code>zinloop --json --out scan.json</code>. It only reads config files and sends nothing over the network.</li>
             <li>Upload <code>scan.json</code> here. Passwords and keys are never in the file; the scanner keeps only their names.</li>
           </ol>

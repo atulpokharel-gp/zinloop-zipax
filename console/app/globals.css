@@ -263,10 +263,21 @@ td.bad { color: var(--high); font-weight: 600; }
 .form label.check input { width: auto; margin-top: 3px; flex: none; }
 
 /* Zipax range picker and table bits. */
-.range-picker { display: inline-flex; gap: 6px; }
+.range-picker { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .range-picker a { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); text-decoration: none; color: var(--muted); font-size: 0.85rem; }
 .range-picker a.range-on { background: var(--accent-soft); color: var(--ink); border-color: var(--line); font-weight: 600; }
 table.data { min-width: 480px; }
+
+/* Zipax agent badge — shown on leaderboard rows and public profile pages. */
+.agent-badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+.agent-badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.agent-badge.agent-claude-code::before { background: #c9ff3b; }
+.agent-badge.agent-codex::before { background: #10a37f; }
+.agent-badge.agent-cursor::before { background: #3b5bff; }
+.agent-badge.agent-aider::before { background: #f59e0b; }
+.agent-badge.agent-copilot::before { background: #8250df; }
+.agent-plus { color: var(--muted); font-weight: 500; font-size: 0.72rem; }
+.profile-agent { margin: -4px 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* Zipax builder-profile bars. */
 .profile-bars { display: flex; flex-direction: column; gap: 18px; }

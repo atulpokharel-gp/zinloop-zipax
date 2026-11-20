@@ -93,7 +93,7 @@ export default function Home() {
               <span className="step-num">3</span>
               <div>
                 <h3>Install the scanner on a laptop</h3>
-                <p className="body">One line of PowerShell on Windows, one line of shell on macOS or Linux. Scripts are signed and the binaries are checksummed.</p>
+                <p className="body">One line of PowerShell on Windows, one line of shell on Linux. Scripts are signed and the binaries are checksummed. A signed macOS build is coming soon.</p>
               </div>
             </li>
             <li>

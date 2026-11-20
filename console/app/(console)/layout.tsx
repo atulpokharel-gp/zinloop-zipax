@@ -20,7 +20,7 @@ export default async function ConsoleLayout({children}:{children:React.ReactNode
       <aside className="console-sidebar">
         <Link href="/app" className="brand"><Logo size={30}/><span>Zinloop <span style={{color:"#c9ff3b"}}>Security</span></span></Link>
         {(demo||session)&&<ConsoleNavigation settingsVisible={Boolean(session)}/>}
-        <div className="console-sidebar-bottom"><Link href="/app/downloads">Get endpoint scanner →</Link><p>Windows · macOS · Linux<br/>Local-first security scanning</p></div>
+        <div className="console-sidebar-bottom"><Link href="/app/downloads">Get endpoint scanner →</Link><p>Windows · Linux · macOS soon<br/>Local-first security scanning</p></div>
       </aside>
       <div className="console-workspace">
         <header className="console-topbar">
