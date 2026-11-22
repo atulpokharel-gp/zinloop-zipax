@@ -1,0 +1,44 @@
+{
+  "name": "@zinloop/agent-control-sdk",
+  "version": "0.1.0",
+  "description": "Zinloop Agent Control Plane SDK — zero-dependency TypeScript/JavaScript client for runtime policy evaluation, model budgets, and shared task channels.",
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "default": "./index.ts"
+    }
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "zinloop",
+    "mcp",
+    "ai-security",
+    "agent",
+    "control-plane",
+    "guardrails",
+    "budget"
+  ],
+  "author": "Zinloop Security",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/atulpokharel-gp/zinloop-zipax.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://zinloop.com",
+  "bugs": {
+    "url": "https://github.com/atulpokharel-gp/zinloop-zipax/issues"
+  },
+  "scripts": {
+    "test": "node --test --experimental-strip-types index.ts"
+  }
+}
