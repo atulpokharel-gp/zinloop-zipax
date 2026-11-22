@@ -8,6 +8,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { getPool, lookup, withTenant, type Tenant } from "./db.ts";
 import { tokenHash } from "./secrets.ts";
 import { sign, verifySigned } from "./crypto.ts";
+import { emptyCounts, reportSeverityCounts, worstSeverity, type SeverityCounts } from "./report-severity.ts";
+import type { Severity } from "./types.ts";
 
 export const KNOWN_TOOLS = ["claude-code", "codex", "aider", "cursor", "copilot"] as const;
 export type Tool = (typeof KNOWN_TOOLS)[number];
@@ -796,6 +798,146 @@ export async function teamProfile(
   });
 }
 
+// --- profile facets: region / country / specialty --------------------------
+//
+// Self-declared, opt-in fields a developer sets on their public profile. The
+// scanner never collects location; these stay empty until the dev picks them.
+// Region is not stored — it is derived from the country here so the mapping
+// lives in one place.
+
+export type Region = "Americas" | "Europe" | "Africa" | "Asia" | "Oceania";
+export const REGIONS: Region[] = ["Americas", "Europe", "Africa", "Asia", "Oceania"];
+
+export interface Country {
+  code: string; // ISO 3166-1 alpha-2, lowercase
+  name: string;
+  region: Region;
+}
+
+// A broad-but-not-exhaustive country list. Every entry carries its region so
+// the leaderboard's region filter expands to the right country codes. Add
+// entries as needed; codes must be lowercase alpha-2 to match the DB check.
+export const COUNTRIES: Country[] = [
+  // Americas
+  { code: "us", name: "United States", region: "Americas" },
+  { code: "ca", name: "Canada", region: "Americas" },
+  { code: "mx", name: "Mexico", region: "Americas" },
+  { code: "br", name: "Brazil", region: "Americas" },
+  { code: "ar", name: "Argentina", region: "Americas" },
+  { code: "cl", name: "Chile", region: "Americas" },
+  { code: "co", name: "Colombia", region: "Americas" },
+  { code: "pe", name: "Peru", region: "Americas" },
+  { code: "uy", name: "Uruguay", region: "Americas" },
+  { code: "cr", name: "Costa Rica", region: "Americas" },
+  // Europe
+  { code: "gb", name: "United Kingdom", region: "Europe" },
+  { code: "ie", name: "Ireland", region: "Europe" },
+  { code: "de", name: "Germany", region: "Europe" },
+  { code: "fr", name: "France", region: "Europe" },
+  { code: "es", name: "Spain", region: "Europe" },
+  { code: "pt", name: "Portugal", region: "Europe" },
+  { code: "it", name: "Italy", region: "Europe" },
+  { code: "nl", name: "Netherlands", region: "Europe" },
+  { code: "be", name: "Belgium", region: "Europe" },
+  { code: "ch", name: "Switzerland", region: "Europe" },
+  { code: "at", name: "Austria", region: "Europe" },
+  { code: "se", name: "Sweden", region: "Europe" },
+  { code: "no", name: "Norway", region: "Europe" },
+  { code: "dk", name: "Denmark", region: "Europe" },
+  { code: "fi", name: "Finland", region: "Europe" },
+  { code: "pl", name: "Poland", region: "Europe" },
+  { code: "cz", name: "Czechia", region: "Europe" },
+  { code: "ro", name: "Romania", region: "Europe" },
+  { code: "ua", name: "Ukraine", region: "Europe" },
+  { code: "gr", name: "Greece", region: "Europe" },
+  { code: "hu", name: "Hungary", region: "Europe" },
+  { code: "rs", name: "Serbia", region: "Europe" },
+  { code: "ee", name: "Estonia", region: "Europe" },
+  { code: "lt", name: "Lithuania", region: "Europe" },
+  { code: "lv", name: "Latvia", region: "Europe" },
+  { code: "tr", name: "Turkey", region: "Europe" },
+  // Africa
+  { code: "ng", name: "Nigeria", region: "Africa" },
+  { code: "za", name: "South Africa", region: "Africa" },
+  { code: "ke", name: "Kenya", region: "Africa" },
+  { code: "eg", name: "Egypt", region: "Africa" },
+  { code: "gh", name: "Ghana", region: "Africa" },
+  { code: "ma", name: "Morocco", region: "Africa" },
+  { code: "tn", name: "Tunisia", region: "Africa" },
+  { code: "et", name: "Ethiopia", region: "Africa" },
+  { code: "ug", name: "Uganda", region: "Africa" },
+  { code: "rw", name: "Rwanda", region: "Africa" },
+  // Asia
+  { code: "in", name: "India", region: "Asia" },
+  { code: "pk", name: "Pakistan", region: "Asia" },
+  { code: "bd", name: "Bangladesh", region: "Asia" },
+  { code: "lk", name: "Sri Lanka", region: "Asia" },
+  { code: "np", name: "Nepal", region: "Asia" },
+  { code: "cn", name: "China", region: "Asia" },
+  { code: "jp", name: "Japan", region: "Asia" },
+  { code: "kr", name: "South Korea", region: "Asia" },
+  { code: "sg", name: "Singapore", region: "Asia" },
+  { code: "my", name: "Malaysia", region: "Asia" },
+  { code: "id", name: "Indonesia", region: "Asia" },
+  { code: "ph", name: "Philippines", region: "Asia" },
+  { code: "th", name: "Thailand", region: "Asia" },
+  { code: "vn", name: "Vietnam", region: "Asia" },
+  { code: "ae", name: "United Arab Emirates", region: "Asia" },
+  { code: "sa", name: "Saudi Arabia", region: "Asia" },
+  { code: "il", name: "Israel", region: "Asia" },
+  { code: "ir", name: "Iran", region: "Asia" },
+  { code: "kz", name: "Kazakhstan", region: "Asia" },
+  // Oceania
+  { code: "au", name: "Australia", region: "Oceania" },
+  { code: "nz", name: "New Zealand", region: "Oceania" },
+];
+
+const COUNTRY_BY_CODE = new Map(COUNTRIES.map((c) => [c.code, c]));
+
+export function isKnownCountry(code: string): boolean {
+  return COUNTRY_BY_CODE.has(code);
+}
+
+export function countryName(code: string): string {
+  return COUNTRY_BY_CODE.get(code)?.name ?? "";
+}
+
+export function regionForCountry(code: string): Region | null {
+  return COUNTRY_BY_CODE.get(code)?.region ?? null;
+}
+
+export function countriesInRegion(region: Region): string[] {
+  return COUNTRIES.filter((c) => c.region === region).map((c) => c.code);
+}
+
+/** Flag emoji from a 2-letter code via regional-indicator code points. */
+export function flagEmoji(code: string): string {
+  if (!/^[a-z]{2}$/.test(code)) return "";
+  const base = 0x1f1e6 - "a".charCodeAt(0);
+  return String.fromCodePoint(base + code.charCodeAt(0), base + code.charCodeAt(1));
+}
+
+export const SPECIALTIES = [
+  { slug: "frontend", label: "Frontend" },
+  { slug: "backend", label: "Backend" },
+  { slug: "fullstack", label: "Fullstack" },
+  { slug: "mobile", label: "Mobile" },
+  { slug: "devops", label: "DevOps" },
+  { slug: "data", label: "Data" },
+  { slug: "ml-ai", label: "ML / AI" },
+  { slug: "security", label: "Security" },
+] as const;
+export type Specialty = (typeof SPECIALTIES)[number]["slug"];
+const SPECIALTY_SET = new Set<string>(SPECIALTIES.map((s) => s.slug));
+
+export function isKnownSpecialty(slug: string): boolean {
+  return SPECIALTY_SET.has(slug);
+}
+
+export function specialtyLabel(slug: string): string {
+  return SPECIALTIES.find((s) => s.slug === slug)?.label ?? "";
+}
+
 // --- public profile prefs --------------------------------------------------
 
 export interface ProfilePrefs {
@@ -812,6 +954,9 @@ export interface ProfilePrefs {
   showDisplayName: boolean;
   showMeanScore: boolean;
   showSessions: boolean;
+  // Opt-in facets (migration 023). Empty string means "not set".
+  country: string;
+  specialty: string;
 }
 
 /** Label used anywhere the dev chose to hide their display name. */
@@ -832,9 +977,12 @@ export async function getPrefs(tenant: Tenant, userHash: string): Promise<Profil
         show_display_name: boolean;
         show_mean_score: boolean;
         show_sessions: boolean;
+        country: string;
+        specialty: string;
       }>(
         `select msp_id, client_id, user_hash, display_name, public_slug, public_dims,
-                leaderboard_opt_in, show_display_name, show_mean_score, show_sessions
+                leaderboard_opt_in, show_display_name, show_mean_score, show_sessions,
+                country, specialty
            from zipax_profile_prefs where user_hash = $1`,
         [userHash],
       )
@@ -851,6 +999,8 @@ export async function getPrefs(tenant: Tenant, userHash: string): Promise<Profil
       showDisplayName: r.show_display_name,
       showMeanScore: r.show_mean_score,
       showSessions: r.show_sessions,
+      country: r.country ?? "",
+      specialty: r.specialty ?? "",
     };
   });
 }
@@ -884,6 +1034,10 @@ export interface SavePrefsPatch {
   showDisplayName?: boolean;
   showMeanScore?: boolean;
   showSessions?: boolean;
+  /** ISO alpha-2, "" to clear. Unknown codes are rejected. */
+  country?: string;
+  /** Specialty slug, "" to clear. Unknown slugs are rejected. */
+  specialty?: string;
 }
 
 /** Needs tenant scope; the viewer is one client, so clientId is required. */
@@ -905,6 +1059,21 @@ export async function savePrefs(
   const showDisplayName = patch.showDisplayName === undefined ? null : Boolean(patch.showDisplayName);
   const showMeanScore = patch.showMeanScore === undefined ? null : Boolean(patch.showMeanScore);
   const showSessions = patch.showSessions === undefined ? null : Boolean(patch.showSessions);
+  // null => not in patch (leave stored value); "" => clear; else a validated value.
+  let country: string | null = null;
+  if (patch.country !== undefined) {
+    const c = patch.country.toLowerCase().trim();
+    if (c === "") country = "";
+    else if (isKnownCountry(c)) country = c;
+    else throw new ZipaxError("Unknown country.");
+  }
+  let specialty: string | null = null;
+  if (patch.specialty !== undefined) {
+    const s = patch.specialty.toLowerCase().trim();
+    if (s === "") specialty = "";
+    else if (isKnownSpecialty(s)) specialty = s;
+    else throw new ZipaxError("Unknown specialty.");
+  }
   return withTenant(tenant, async (db) => {
     // Upsert. Keep existing fields when the patch doesn't name them. The
     // boolean toggles use their own `has_*` flags so a null patch leaves
@@ -921,14 +1090,18 @@ export async function savePrefs(
         show_display_name: boolean;
         show_mean_score: boolean;
         show_sessions: boolean;
+        country: string;
+        specialty: string;
       }>(
         `insert into zipax_profile_prefs (
            msp_id, client_id, user_hash, display_name, public_slug, public_dims,
-           leaderboard_opt_in, show_display_name, show_mean_score, show_sessions
+           leaderboard_opt_in, show_display_name, show_mean_score, show_sessions,
+           country, specialty
          )
          values (
            $1, $2, $3, coalesce($4, ''), $5, $6::text[],
-           coalesce($7, false), coalesce($8, true), coalesce($9, true), coalesce($10, true)
+           coalesce($7, false), coalesce($8, true), coalesce($9, true), coalesce($10, true),
+           coalesce($17, ''), coalesce($18, '')
          )
          on conflict (msp_id, user_hash) do update set
            client_id          = excluded.client_id,
@@ -939,9 +1112,12 @@ export async function savePrefs(
            show_display_name  = case when $14::boolean then excluded.show_display_name  else zipax_profile_prefs.show_display_name  end,
            show_mean_score    = case when $15::boolean then excluded.show_mean_score    else zipax_profile_prefs.show_mean_score    end,
            show_sessions      = case when $16::boolean then excluded.show_sessions      else zipax_profile_prefs.show_sessions      end,
+           country            = case when $19::boolean then excluded.country   else zipax_profile_prefs.country   end,
+           specialty          = case when $20::boolean then excluded.specialty else zipax_profile_prefs.specialty end,
            updated_at         = now()
          returning msp_id, client_id, user_hash, display_name, public_slug, public_dims,
-                   leaderboard_opt_in, show_display_name, show_mean_score, show_sessions`,
+                   leaderboard_opt_in, show_display_name, show_mean_score, show_sessions,
+                   country, specialty`,
         [
           tenant.mspId,
           tenant.clientId,
@@ -959,6 +1135,10 @@ export async function savePrefs(
           showDisplayName !== null,
           showMeanScore !== null,
           showSessions !== null,
+          country,
+          specialty,
+          patch.country !== undefined,
+          patch.specialty !== undefined,
         ],
       )
     ).rows[0];
@@ -973,6 +1153,8 @@ export async function savePrefs(
       showDisplayName: r.show_display_name,
       showMeanScore: r.show_mean_score,
       showSessions: r.show_sessions,
+      country: r.country ?? "",
+      specialty: r.specialty ?? "",
     };
   });
 }
@@ -1110,6 +1292,20 @@ export interface LeaderboardRow {
   // columns the row surfaces.
   showMeanScore: boolean;
   showSessions: boolean;
+  // Self-declared facets (migration 023). Empty string when the dev didn't set
+  // one. On the public board these drive the region/country/specialty filters.
+  country: string;
+  specialty: string;
+}
+
+/** Facet filters for the public leaderboard. */
+export interface LeaderboardFilter {
+  /** A region: expanded to its country codes. Ignored if `country` is set. */
+  region?: Region | null;
+  /** A single ISO alpha-2 country code. Narrows within a region. */
+  country?: string | null;
+  /** A specialty slug. */
+  specialty?: string | null;
 }
 
 /**
@@ -1117,13 +1313,29 @@ export interface LeaderboardRow {
  * public profile. Rankings come from the SECURITY DEFINER function
  * zipax_public_leaderboard, which aggregates scores server-side and never
  * returns anything outside what the dev already published on /p/{slug}.
+ *
+ * Region/country/specialty filtering happens server-side: a region is
+ * expanded here to the set of country codes it contains and passed as the
+ * country filter, so the ranking and row cap still apply after filtering.
  */
 export async function readPublicLeaderboard(
   days = 30,
   limit = 100,
-  onlyTool: string = "",
+  filter: LeaderboardFilter | string = {},
+  onlyTool = "",
 ): Promise<LeaderboardRow[]> {
+  if (typeof filter === "string") { onlyTool = filter; filter = {}; }
   const tool = onlyTool.toLowerCase().trim();
+  let countries: string[] | null = null;
+  const country = (filter.country ?? "").toLowerCase().trim();
+  if (country && isKnownCountry(country)) {
+    countries = [country];
+  } else if (filter.region && REGIONS.includes(filter.region)) {
+    countries = countriesInRegion(filter.region);
+  }
+  const specialty = (filter.specialty ?? "").toLowerCase().trim();
+  const specialtyFilter = specialty && isKnownSpecialty(specialty) ? specialty : null;
+
   const rows = (
     await getPool().query<{
       user_hash: string;
@@ -1133,12 +1345,20 @@ export async function readPublicLeaderboard(
       show_display_name: boolean;
       show_mean_score: boolean;
       show_sessions: boolean;
+      country: string;
+      specialty: string;
       dim_scores: Record<string, number> | null;
       mean_score: number;
       sessions_counted: number;
       primary_tool: string | null;
       tool_sessions: Record<string, number | string> | null;
-    }>("select * from zipax_public_leaderboard($1, $2, $3)", [days, limit, tool])
+    }>("select * from zipax_public_leaderboard($1, $2, $3, $4, $5)", [
+      days,
+      limit,
+      countries,
+      specialtyFilter,
+      tool,
+    ])
   ).rows;
   return rows.map((r) =>
     shapeLeaderboardRow({
@@ -1157,6 +1377,8 @@ export async function readPublicLeaderboard(
       show_sessions: r.show_sessions,
       primary_tool: r.primary_tool,
       tool_sessions: r.tool_sessions,
+      country: r.country,
+      specialty: r.specialty,
     }),
   );
 }
@@ -1192,6 +1414,8 @@ export async function readCompanyLeaderboard(
         show_sessions: boolean | null;
         primary_tool: string | null;
         tool_sessions: Record<string, number | string> | null;
+        country: string | null;
+        specialty: string | null;
       }>(
         `with scored as (
            select user_hash,
@@ -1238,7 +1462,9 @@ export async function readCompanyLeaderboard(
                 pr.show_mean_score,
                 pr.show_sessions,
                 tp.primary_tool,
-                coalesce(tp.tool_sessions, '{}'::jsonb) as tool_sessions
+                coalesce(tp.tool_sessions, '{}'::jsonb) as tool_sessions,
+                pr.country,
+                pr.specialty
            from per_user p
            left join zipax_profile_prefs pr on pr.user_hash = p.user_hash
            left join tool_pick tp on tp.user_hash = p.user_hash
@@ -1263,6 +1489,8 @@ export async function readCompanyLeaderboard(
         show_sessions: true,
         primary_tool: r.primary_tool,
         tool_sessions: r.tool_sessions,
+        country: r.country ?? "",
+        specialty: r.specialty ?? "",
       }),
     );
   });
@@ -1280,6 +1508,8 @@ function shapeLeaderboardRow(r: {
   show_sessions: boolean;
   primary_tool: string | null;
   tool_sessions: Record<string, number | string> | null;
+  country: string;
+  specialty: string;
 }): LeaderboardRow {
   const dimScores: Partial<Record<Dimension, number>> = {};
   for (const [k, v] of Object.entries(r.dim_scores ?? {})) {
@@ -1302,12 +1532,186 @@ function shapeLeaderboardRow(r: {
     toolSessions,
     showMeanScore: r.show_mean_score,
     showSessions: r.show_sessions,
+    country: r.country ?? "",
+    specialty: r.specialty ?? "",
   };
 }
 
 function clampScore(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+// --- Zinloop security join --------------------------------------------------
+//
+// A Zipax developer (user_hash) reports from one or more laptops; both
+// zipax_profile_scores and zipax_usage_events carry the device_id those rows
+// came from, and that same device_id is what the Zinloop scanner stores
+// security findings against (scans.report). These helpers walk that join so a
+// developer's coding profile can show the security posture of their own
+// laptop(s) — the "connect Zinloop and Zipax" view.
+//
+// Scope: internal/company surfaces only. We never attach findings to the
+// public cross-tenant leaderboard — that would publish which developers run
+// risky laptops.
+
+/** A developer's aggregate security posture across their scanned laptops. */
+export interface UserSecurity {
+  worst: Severity;
+  high: number;
+  medium: number;
+  low: number;
+  /** How many of the developer's devices have a scan report in the window. */
+  devices: number;
+  /** The most severe device, for a drill-down link. Null when none reported. */
+  linkDeviceId: string | null;
+  /** ISO timestamp of the most recent scan across the developer's devices. */
+  lastScan: string | null;
+}
+
+/** One laptop's security posture for the per-developer profile page. */
+export interface DeviceSecurity {
+  deviceId: string;
+  hostname: string;
+  worst: Severity;
+  high: number;
+  medium: number;
+  low: number;
+  lastScan: string | null;
+}
+
+const SEV_RANK: Record<Severity, number> = { high: 3, medium: 2, low: 1, none: 0 };
+
+interface DeviceReportRow {
+  user_hash: string;
+  device_id: string;
+  report: unknown;
+  scanned_at: Date | string | null;
+}
+
+function asIso(v: Date | string | null): string | null {
+  if (!v) return null;
+  return typeof v === "string" ? v : v.toISOString();
+}
+
+/**
+ * Aggregate security posture for a set of developers, keyed by user_hash.
+ * Used by the company leaderboard. Parses each device's latest report once,
+ * even when several developers share a laptop.
+ */
+export async function securityForUsers(
+  tenant: Tenant,
+  userHashes: string[],
+  days = 30,
+  now = new Date(),
+): Promise<Map<string, UserSecurity>> {
+  const out = new Map<string, UserSecurity>();
+  const hashes = [...new Set(userHashes.filter((h) => HASH_RE.test(h)))];
+  if (hashes.length === 0) return out;
+  const since = sinceDay(days, now);
+  return withTenant(tenant, async (db) => {
+    const rows = (
+      await db.query<DeviceReportRow>(
+        `select distinct on (ps.user_hash, ps.device_id)
+                ps.user_hash, ps.device_id, s.report, s.scanned_at
+           from zipax_profile_scores ps
+           left join lateral (
+             select report, scanned_at from scans
+              where device_id = ps.device_id
+              order by scanned_at desc, received_at desc
+              limit 1
+           ) s on true
+          where ps.user_hash = any($1::text[]) and ps.bucket_day >= $2
+          order by ps.user_hash, ps.device_id`,
+        [hashes, since],
+      )
+    ).rows;
+
+    const parsedByDevice = new Map<string, SeverityCounts>();
+    const worstRank = new Map<string, number>();
+    for (const row of rows) {
+      if (!row.report) continue; // device known but no scan yet
+      let counts = parsedByDevice.get(row.device_id);
+      if (!counts) {
+        counts = reportSeverityCounts(row.report);
+        parsedByDevice.set(row.device_id, counts);
+      }
+      let agg = out.get(row.user_hash);
+      if (!agg) {
+        agg = { worst: "none", high: 0, medium: 0, low: 0, devices: 0, linkDeviceId: null, lastScan: null };
+        out.set(row.user_hash, agg);
+        worstRank.set(row.user_hash, -1);
+      }
+      agg.high += counts.high;
+      agg.medium += counts.medium;
+      agg.low += counts.low;
+      agg.devices += 1;
+      const rank = SEV_RANK[worstSeverity(counts)];
+      if (rank > (worstRank.get(row.user_hash) ?? -1)) {
+        worstRank.set(row.user_hash, rank);
+        agg.linkDeviceId = row.device_id;
+      }
+      const iso = asIso(row.scanned_at);
+      if (iso && (!agg.lastScan || iso > agg.lastScan)) agg.lastScan = iso;
+    }
+    for (const agg of out.values()) {
+      agg.worst = worstSeverity(agg);
+    }
+    return out;
+  });
+}
+
+/**
+ * Per-laptop security posture for one developer, newest/most-severe first.
+ * Used by the per-developer profile page.
+ */
+export async function userDeviceSecurity(
+  tenant: Tenant,
+  userHash: string,
+  days = 30,
+  now = new Date(),
+): Promise<DeviceSecurity[]> {
+  if (!HASH_RE.test(userHash)) return [];
+  const since = sinceDay(days, now);
+  return withTenant(tenant, async (db) => {
+    const rows = (
+      await db.query<DeviceReportRow & { hostname: string }>(
+        `select distinct on (ps.device_id)
+                ps.device_id, d.hostname, s.report, s.scanned_at
+           from zipax_profile_scores ps
+           join devices d on d.id = ps.device_id
+           left join lateral (
+             select report, scanned_at from scans
+              where device_id = ps.device_id
+              order by scanned_at desc, received_at desc
+              limit 1
+           ) s on true
+          where ps.user_hash = $1 and ps.bucket_day >= $2
+          order by ps.device_id`,
+        [userHash, since],
+      )
+    ).rows;
+
+    const list: DeviceSecurity[] = rows.map((row) => {
+      const counts = row.report ? reportSeverityCounts(row.report) : emptyCounts();
+      return {
+        deviceId: row.device_id,
+        hostname: row.hostname,
+        worst: worstSeverity(counts),
+        high: counts.high,
+        medium: counts.medium,
+        low: counts.low,
+        lastScan: asIso(row.scanned_at),
+      };
+    });
+    list.sort(
+      (a, b) =>
+        SEV_RANK[b.worst] - SEV_RANK[a.worst] ||
+        b.high - a.high ||
+        a.hostname.localeCompare(b.hostname),
+    );
+    return list;
+  });
 }
 
 /** Formats cents as a USD dollar amount. */

@@ -15,23 +15,24 @@ export default async function ConsoleLayout({children}:{children:React.ReactNode
   const demo=!hasDatabase();
   const session=demo?null:await currentSession();
   return <>
-    {demo&&<div className="demo-banner">Demo workspace with synthetic data. No live customer systems are connected.</div>}
+    <a className="skip-link" href="#main-content">Skip to content</a>
     <div className="console-shell">
       <aside className="console-sidebar">
-        <Link href="/app" className="brand"><Logo size={30}/><span>Zinloop <span style={{color:"#c9ff3b"}}>Security</span></span></Link>
+        <Link href="/app" className="brand"><Logo size={30}/><span>Zinloop<span className="brand-caption">SECURITY WORKSPACE</span></span></Link>
+        <div className="workspace-switch"><span className="workspace-avatar">{(session?.mspName||MSP_NAME).slice(0,1)}</span><div><b>{session?.mspName||MSP_NAME}</b><span>{demo?"Demo workspace":"Security operations"}</span></div></div>
         {(demo||session)&&<ConsoleNavigation settingsVisible={Boolean(session)}/>}
-        <div className="console-sidebar-bottom"><Link href="/app/downloads">Get endpoint scanner →</Link><p>Windows · Linux · macOS soon<br/>Local-first security scanning</p></div>
+        <div className="console-sidebar-bottom"><Link href="/app/downloads">Get endpoint scanner →</Link><p>Local-first. Privacy-conscious.<br/>Windows · macOS · Linux</p></div>
       </aside>
       <div className="console-workspace">
         <header className="console-topbar">
-          <span className="console-topbar-title">MSP / Security operations</span>
+          <span className="console-topbar-title">Workspace <span aria-hidden="true">/</span> <b>Security operations</b></span>
           <div className="console-topbar-right">
-            {demo&&<span className="msp">{MSP_NAME} · Demo</span>}
+            {demo&&<span className="msp"><span className="demo-dot"/> Sample data</span>}
             {session&&<span className="msp">{session.mspName} · {session.email}</span>}
             {session&&<form action={signOutAction}><button type="submit" className="link-btn">Sign out</button></form>}
           </div>
         </header>
-        <main className="console-main">{children}</main>
+        <main id="main-content" className="console-main">{children}</main>
       </div>
     </div>
   </>;

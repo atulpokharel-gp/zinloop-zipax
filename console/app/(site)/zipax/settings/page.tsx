@@ -12,11 +12,13 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { withTenant } from "@/lib/db.ts";
 import {
+  COUNTRIES,
   DIMENSION_LABEL,
   DIMENSIONS,
   getPrefs,
   SLUG_MAX,
   SLUG_MIN,
+  SPECIALTIES,
   ZIPAX_DEV_COOKIE,
   type ProfilePrefs,
   readDevIdentity,
@@ -130,9 +132,9 @@ function ShareForm({
   const chosen = new Set(initial?.publicDims ?? []);
   const isOn = Boolean(initial?.publicSlug) && chosen.size > 0;
   // Defaults for a brand-new publish: show the display name, show overall
-  // and sessions, and stay off the leaderboard. Everything the dev leaves
-  // untouched is explicitly private.
-  const leaderboardOptIn = initial?.leaderboardOptIn ?? false;
+  // and sessions, and appear on the leaderboard (opt-out). Everything else the
+  // dev leaves untouched stays private.
+  const leaderboardOptIn = initial?.leaderboardOptIn ?? true;
   const showDisplayName = initial?.showDisplayName ?? true;
   const showMeanScore = initial?.showMeanScore ?? true;
   const showSessions = initial?.showSessions ?? true;
@@ -193,6 +195,39 @@ function ShareForm({
           </fieldset>
 
           <fieldset className="dim-fieldset">
+            <legend>Where &amp; what you build (optional, public)</legend>
+            <label>
+              <span>Country</span>
+              <select name="country" defaultValue={initial?.country ?? ""}>
+                <option value="">— Not shown —</option>
+                {[...COUNTRIES]
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.name}
+                    </option>
+                  ))}
+              </select>
+              <span className="muted small">
+                Shows a flag on the leaderboard and lets people filter by country and region. We
+                never detect your location — this is only what you pick here.
+              </span>
+            </label>
+            <label>
+              <span>Specialty</span>
+              <select name="specialty" defaultValue={initial?.specialty ?? ""}>
+                <option value="">— Not shown —</option>
+                {SPECIALTIES.map((s) => (
+                  <option key={s.slug} value={s.slug}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+              <span className="muted small">The kind of work you do, for the leaderboard&rsquo;s task filter.</span>
+            </label>
+          </fieldset>
+
+          <fieldset className="dim-fieldset">
             <legend>What else shows</legend>
             <label className="check">
               <input
@@ -202,7 +237,7 @@ function ShareForm({
               />
               <span>
                 List me on the public leaderboard
-                <span className="muted small"> — off by default. When off, your /p/{"{slug}"} page still works for people with the link.</span>
+                <span className="muted small"> — on by default for a public profile. Untick to keep your /p/{"{slug}"} page working for people with the link while staying off the leaderboard.</span>
               </span>
             </label>
             <label className="check">

@@ -103,7 +103,9 @@ function build(row: DeviceDbRow, demo: boolean): Endpoint {
     }
   }
   const scannedAt = row.last_scan_at?.toISOString() || null;
-  const isStale = scannedAt ? Date.now() - new Date(scannedAt).getTime() > 7 * 86400000 : false;
+  // Keep synthetic device status aligned with the overview's frozen demo clock.
+  const now = demo ? new Date("2026-10-24T09:00:00Z").getTime() : Date.now();
+  const isStale = scannedAt ? now - new Date(scannedAt).getTime() > 7 * 86400000 : false;
   return {
     id: row.id, clientId: row.client_id, clientName: row.client_name,
     hostname: row.hostname, os: row.os || "Unknown", lastScan: scannedAt,

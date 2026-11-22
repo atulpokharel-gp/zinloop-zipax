@@ -278,6 +278,14 @@ table.data { min-width: 480px; }
 .agent-badge.agent-copilot::before { background: #8250df; }
 .agent-plus { color: var(--muted); font-weight: 500; font-size: 0.72rem; }
 .profile-agent { margin: -4px 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* Public leaderboard filter form (region / country / specialty + window / dim). */
+.lb-filters { display: flex; gap: 10px 12px; flex-wrap: wrap; align-items: flex-end; margin-top: 12px; }
+.lb-filters label { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); }
+.lb-filters select { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); min-width: 150px; }
+.lb-filters-actions { display: flex; gap: 10px; align-items: center; }
+.lb-filters-actions button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--accent-soft); color: var(--ink); font-weight: 600; cursor: pointer; }
+.lb-filters-note { flex-basis: 100%; margin: 2px 0 0; }
+.tag { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 0.78rem; border: 1px solid var(--line); background: var(--surface); color: var(--ink); white-space: nowrap; }
 
 /* Zipax builder-profile bars. */
 .profile-bars { display: flex; flex-direction: column; gap: 18px; }

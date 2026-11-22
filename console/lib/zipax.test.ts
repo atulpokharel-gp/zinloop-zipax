@@ -2,16 +2,27 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   allTokens,
+  COUNTRIES,
+  countriesInRegion,
+  countryName,
   DIMENSIONS,
+  flagEmoji,
   fmtTokens,
   fmtUsd,
+  isKnownCountry,
+  isKnownSpecialty,
   newClaimToken,
   newPublicSlug,
   parseUpload,
+  type Region,
+  REGIONS,
+  regionForCountry,
   ZipaxError,
   readDevIdentity,
   rollup,
   signDevIdentity,
+  SPECIALTIES,
+  specialtyLabel,
   type NormalBucket,
 } from "./zipax.ts";
 
@@ -385,4 +396,49 @@ test("fmtUsd shows two decimals under $1000 and whole dollars above", () => {
   assert.equal(fmtUsd(1_234), "$12.34");
   assert.equal(fmtUsd(10_050), "$100.50");
   assert.equal(fmtUsd(250_000), "$2500");
+});
+
+test("every country carries a known region", () => {
+  for (const c of COUNTRIES) {
+    assert.ok(REGIONS.includes(c.region), `${c.code} has region ${c.region}`);
+    assert.match(c.code, /^[a-z]{2}$/, `${c.code} is lowercase alpha-2`);
+  }
+});
+
+test("country codes are unique", () => {
+  const codes = COUNTRIES.map((c) => c.code);
+  assert.equal(new Set(codes).size, codes.length);
+});
+
+test("regionForCountry and countriesInRegion agree", () => {
+  assert.equal(regionForCountry("de"), "Europe");
+  assert.equal(regionForCountry("us"), "Americas");
+  assert.equal(regionForCountry("zz"), null);
+  for (const r of REGIONS) {
+    for (const code of countriesInRegion(r as Region)) {
+      assert.equal(regionForCountry(code), r);
+    }
+  }
+});
+
+test("isKnownCountry / countryName", () => {
+  assert.equal(isKnownCountry("gb"), true);
+  assert.equal(isKnownCountry("zz"), false);
+  assert.equal(countryName("gb"), "United Kingdom");
+  assert.equal(countryName("zz"), "");
+});
+
+test("flagEmoji turns a code into regional indicators", () => {
+  assert.equal(flagEmoji("us"), "\u{1F1FA}\u{1F1F8}");
+  assert.equal(flagEmoji("de"), "\u{1F1E9}\u{1F1EA}");
+  assert.equal(flagEmoji("USA"), ""); // not 2 lowercase letters
+  assert.equal(flagEmoji(""), "");
+});
+
+test("specialty helpers", () => {
+  assert.ok(SPECIALTIES.length > 0);
+  assert.equal(isKnownSpecialty("backend"), true);
+  assert.equal(isKnownSpecialty("astrology"), false);
+  assert.equal(specialtyLabel("ml-ai"), "ML / AI");
+  assert.equal(specialtyLabel("nope"), "");
 });

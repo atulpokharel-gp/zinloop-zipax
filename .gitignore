@@ -1,1 +1,12 @@
 .env
+
+# Secrets: downloaded OAuth client credentials, never commit
+key/
+*client_secret*.json
+
+# Marketing / media / QA capture assets — not product code (ARCHITECTURE.md)
+captures/
+hype-assets/
+vo-openai/
+generate-voice.py
+zinloop.exe
