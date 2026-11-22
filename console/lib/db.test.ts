@@ -11,6 +11,7 @@ import pg from "pg";
 import { migrate } from "../scripts/migrate.ts";
 import { createMsp } from "../scripts/create-msp.ts";
 import { closePool, getPool, withTenant } from "./db.ts";
+import { readPublicLeaderboard } from "./zipax.ts";
 import { tokenHash } from "./secrets.ts";
 import { checkSession, endOtherSessions, finishMfa, listSessions, signIn, signOut } from "./auth.ts";
 import { listAudit } from "./audit.ts";
@@ -126,6 +127,42 @@ describe("database", { skip: !adminUrl && "set TEST_DATABASE_ADMIN_URL to run" }
     await admin.end();
   });
 
+  test("public leaderboard combines agent and facet filters before the row cap and preserves privacy", async () => {
+    const clientId = await createClient(a.mspId, { name: "Leaderboard regression" });
+    const token = await createUploadToken(a.mspId, clientId, "Fixture scanner");
+    await ingestScan(token, { ...sample, hostname: "LEADERBOARD-QA" });
+    await withTenant(a.mspId, async db => {
+      const deviceId = (await db.query("select id from devices where client_id=$1 limit 1", [clientId])).rows[0].id;
+      for (const [hash, country, tool, score, optedIn] of [
+        ["a".repeat(32), "de", "codex", 99, true],
+        ["b".repeat(32), "us", "cursor", 95, true],
+        ["c".repeat(32), "us", "codex", 80, true],
+        ["d".repeat(32), "us", "codex", 100, false],
+      ] as const) {
+        await db.query(`insert into zipax_profile_prefs
+          (msp_id,client_id,user_hash,display_name,public_slug,public_dims,country,specialty,leaderboard_opt_in,show_display_name)
+          values ($1,$2,$3,'Private label',$3,array['engineering'],$4,'backend',$5,false)`,
+          [a.mspId,clientId,hash,country,optedIn]);
+        for (const [dim, value] of [["engineering",score],["planning",100]] as const) {
+          await db.query(`insert into zipax_profile_scores
+            (msp_id,client_id,device_id,tool,user_hash,project_hash,dimension,bucket_day,score,sessions)
+            values ($1,$2,$3,$4,$5,$5,$6,current_date,$7,4)`,
+            [a.mspId,clientId,deviceId,tool,hash,dim,value]);
+        }
+      }
+    });
+    const rows=await readPublicLeaderboard(30,1,{country:"us",specialty:"backend"},"codex");
+    assert.equal(rows.length,1);
+    assert.equal(rows[0].userHash,"c".repeat(32));
+    assert.equal(rows[0].primaryTool,"codex");
+    assert.equal(rows[0].country,"us");
+    assert.equal(rows[0].meanScore,80);
+    assert.equal(rows[0].dimScores.planning,undefined);
+    assert.notEqual(rows[0].displayName,"Private label");
+    assert.equal((await getPool().query("select count(*)::int as n from zipax_profile_prefs")).rows[0].n,0);
+    assert.equal((await getPool().query("select count(*)::int as n from zipax_profile_scores")).rows[0].n,0);
+  });
+
   test("sign-in checks the password and sessions can be ended", async () => {
     assert.equal((await signIn("admin@a.example", "wrong")).kind, "wrong");
     assert.equal((await signIn("nobody@a.example", "correct horse battery")).kind, "wrong");
@@ -182,6 +219,79 @@ describe("database", { skip: !adminUrl && "set TEST_DATABASE_ADMIN_URL to run" }
 
     const stored = await getPool().query("select count(*)::int as n from scans"); // no tenant: invisible
     assert.equal(stored.rows[0].n, 0);
+  });
+
+  // Scans carry the sensitive report jsonb (findings + redacted secrets). These three
+  // tests prove that even if an attacker reuses a legitimate MSP's session (so
+  // `app.msp_id` is a valid uuid in `withTenant`), Postgres RLS prevents them from
+  // listing, reading or mutating another MSP's scan rows via raw SQL. Pairs with the
+  // "one MSP can't see or write another MSP's clients" test above.
+
+  test("scans RLS: MSP B's list query cannot see MSP A's scans", async () => {
+    const aClient = await createClient(a.mspId, { name: "Scans RLS Co A", devicesExpected: 1 });
+    const aToken = await createUploadToken(a.mspId, aClient, "rls-list-test");
+    const now = new Date("2026-10-29T12:00:00Z");
+    await ingestScan(aToken, { ...sample, hostname: "RLS-A-LAPTOP" }, now);
+
+    // Prove the scan exists under A's tenant.
+    const asA = await withTenant(a.mspId, (db) =>
+      db.query("select id from scans where msp_id = $1", [a.mspId]),
+    );
+    assert.ok(asA.rows.length >= 1, "scan should be visible under MSP A");
+
+    // Under MSP B's tenant, the same unfiltered select returns zero rows.
+    const asB = await withTenant(b.mspId, (db) => db.query("select id from scans"));
+    assert.equal(asB.rows.length, 0, "MSP B must not see any of MSP A's scans");
+  });
+
+  test("scans RLS: MSP B cannot read MSP A's scan even with the exact row ID", async () => {
+    const aClient = await createClient(a.mspId, { name: "Scans RLS Co A-ID", devicesExpected: 1 });
+    const aToken = await createUploadToken(a.mspId, aClient, "rls-read-test");
+    const now = new Date("2026-10-29T12:00:00Z");
+    await ingestScan(aToken, { ...sample, hostname: "RLS-A-ID-LAPTOP" }, now);
+
+    const aScanId = await withTenant(a.mspId, async (db) => {
+      const r = await db.query("select id from scans order by received_at desc limit 1");
+      return r.rows[0].id as string;
+    });
+
+    // MSP B queries the row by its primary key. RLS filters it out: zero rows.
+    const stolen = await withTenant(b.mspId, (db) =>
+      db.query("select id, report from scans where id = $1", [aScanId]),
+    );
+    assert.equal(stolen.rows.length, 0, "MSP B must not read MSP A's scan by ID");
+  });
+
+  test("scans RLS: MSP B cannot update or delete MSP A's scan row", async () => {
+    const aClient = await createClient(a.mspId, { name: "Scans RLS Co A-W", devicesExpected: 1 });
+    const aToken = await createUploadToken(a.mspId, aClient, "rls-write-test");
+    const now = new Date("2026-10-29T12:00:00Z");
+    await ingestScan(aToken, { ...sample, hostname: "RLS-A-W-LAPTOP" }, now);
+
+    const aScanId = await withTenant(a.mspId, async (db) => {
+      const r = await db.query("select id from scans order by received_at desc limit 1");
+      return r.rows[0].id as string;
+    });
+
+    // UPDATE from B's tenant: RLS filters the row out of the UPDATE's targets, so
+    // zero rows are affected. Postgres does not raise — it just updates nothing.
+    const updated = await withTenant(b.mspId, (db) =>
+      db.query("update scans set report = '{}'::jsonb where id = $1", [aScanId]),
+    );
+    assert.equal(updated.rowCount, 0, "MSP B's UPDATE must affect zero rows");
+
+    // DELETE from B's tenant: same filter, zero rows deleted.
+    const deleted = await withTenant(b.mspId, (db) =>
+      db.query("delete from scans where id = $1", [aScanId]),
+    );
+    assert.equal(deleted.rowCount, 0, "MSP B's DELETE must affect zero rows");
+
+    // Prove the row still exists untouched under A's tenant.
+    const stillThere = await withTenant(a.mspId, (db) =>
+      db.query("select report from scans where id = $1", [aScanId]),
+    );
+    assert.equal(stillThere.rows.length, 1, "MSP A's scan must still exist");
+    assert.notDeepEqual(stillThere.rows[0].report, {}, "MSP A's report must not be MSP B's '{}'");
   });
 
   test("a late upload of an old scan doesn't count as fresh", async () => {

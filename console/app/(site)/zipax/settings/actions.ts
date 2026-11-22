@@ -96,6 +96,10 @@ export async function saveZipaxSettingsAction(formData: FormData): Promise<void>
       showDisplayName: formData.get("showDisplayName") === "on",
       showMeanScore: formData.get("showMeanScore") === "on",
       showSessions: formData.get("showSessions") === "on",
+      // Opt-in facets. "" clears; an unknown value is rejected by savePrefs
+      // and surfaced as an inline error via the catch below.
+      country: String(formData.get("country") ?? ""),
+      specialty: String(formData.get("specialty") ?? ""),
     });
   } catch (err) {
     // Next's redirect() throws a special sentinel; rethrow so Next handles

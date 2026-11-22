@@ -15,8 +15,10 @@ import {
   type Dimension,
   type LeaderboardRow,
   readCompanyLeaderboard,
+  securityForUsers,
+  type UserSecurity,
 } from "@/lib/zipax.ts";
-import { RangePicker } from "../_shared.tsx";
+import { RangePicker, SecurityBadge } from "../_shared.tsx";
 
 export const metadata: Metadata = { title: "Zipax — Company leaderboard" };
 export const dynamic = "force-dynamic";
@@ -43,13 +45,21 @@ export default async function CompanyLeaderboard({
   const agent = pickAgent(q.agent);
   const rows = await readCompanyLeaderboard(session.mspId, days, 200, agent);
   const ranked = sortByDim(rows, dim);
+  // Connect each developer's coding profile to the Zinloop security posture of
+  // their own laptop(s), over the same window.
+  const security = await securityForUsers(
+    session.mspId,
+    ranked.map((r) => r.userHash),
+    days,
+  );
   return (
     <>
       <div className="page-head">
         <h1>Company leaderboard</h1>
         <p className="muted">
           Every developer in your tenant, ranked by builder-profile score over the last {days} days.
-          Scores come from each laptop's own coding sessions — no opt-in required for this view.
+          Scores come from each laptop's own coding sessions — no opt-in required for this view. The
+          laptop-security column ties each developer to the Zinloop findings on their own device(s).
         </p>
         <RangePicker days={days} base="/app/zipax/leaderboard" />
         <AgentPicker current={agent} days={days} dim={dim} base="/app/zipax/leaderboard" />
@@ -72,7 +82,7 @@ export default async function CompanyLeaderboard({
               )}
             </p>
           ) : (
-            <LeaderboardTable rows={ranked} activeDim={dim} linkBase="/app/zipax/dev" />
+            <LeaderboardTable rows={ranked} activeDim={dim} linkBase="/app/zipax/dev" security={security} />
           )}
         </div>
       </section>
@@ -84,10 +94,12 @@ function LeaderboardTable({
   rows,
   activeDim,
   linkBase,
+  security,
 }: {
   rows: LeaderboardRow[];
   activeDim: Dimension | "overall";
   linkBase: string;
+  security: Map<string, UserSecurity>;
 }) {
   return (
     <table className="data">
@@ -101,6 +113,7 @@ function LeaderboardTable({
             <th key={d} className={`num ${d === activeDim ? "active" : ""}`}>{DIMENSION_LABEL[d]}</th>
           ))}
           <th className="num">Sessions</th>
+          <th>Laptop security</th>
           <th>Public?</th>
         </tr>
       </thead>
@@ -122,6 +135,7 @@ function LeaderboardTable({
               );
             })}
             <td className="num">{r.sessions}</td>
+            <td><SecurityBadge sec={security.get(r.userHash)} /></td>
             <td>
               {r.publicSlug ? (
                 <Link href={`/p/${r.publicSlug}`} className="muted small">On</Link>

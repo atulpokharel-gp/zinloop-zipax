@@ -15,15 +15,21 @@ export interface CallResult<T> {value:T;outputText:string;costUsd:number}
 export interface RunOptions {input:string;maxUsd:number;taskId?:string;requestedModel?:string;phase?:"input"|"tool"}
 export type Evaluator=(phase:"input"|"output"|"tool",text:string)=>boolean|Promise<boolean>;
 export class ZinloopBlocked extends Error {
-  constructor(public readonly decision:GuardDecision){super("Zinloop policy blocked this call");}
+  readonly decision:GuardDecision;
+  constructor(decision:GuardDecision){
+    super("Zinloop policy blocked this call");
+    this.decision=decision;
+  }
 }
 export class ZinloopAgent {
+  private readonly options:ClientOptions;
   private token:string|undefined;
   private setupPromise:Promise<string>|undefined;
   private localEvaluators=new Map<string,Evaluator>();
-  constructor(private readonly options:ClientOptions){
+  constructor(options:ClientOptions){
     if(!/^https:\/\//.test(options.url)&&!/^http:\/\/localhost(?::\d+)?$/.test(options.url))
       throw Error("Control plane requires HTTPS (localhost HTTP allowed for development)");
+    this.options=options;
     this.token=options.agentToken;
   }
   /** Register an additional local evaluator. Server-side controls still apply. */

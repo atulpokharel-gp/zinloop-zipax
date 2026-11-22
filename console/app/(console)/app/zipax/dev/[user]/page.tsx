@@ -2,10 +2,20 @@
 // side. The developer's own personal view lives under /portal/zipax.
 
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { hasDatabase } from "@/lib/db.ts";
 import { requireSession } from "@/lib/session.ts";
-import { allTokens, fmtTokens, fmtUsd, userProfile, userRollup } from "@/lib/zipax.ts";
+import {
+  allTokens,
+  type DeviceSecurity,
+  fmtTokens,
+  fmtUsd,
+  userDeviceSecurity,
+  userProfile,
+  userRollup,
+} from "@/lib/zipax.ts";
+import { severityLabel } from "@/lib/risk.ts";
 import { GroupTable, RangePicker } from "../../_shared.tsx";
 import { ProfilePanel } from "@/components/ProfilePanel.tsx";
 
@@ -26,9 +36,10 @@ export default async function ZipaxDev({
   const days = pickDays(q.days);
   const userHash = decodeURIComponent(user).toLowerCase();
   if (!/^[0-9a-f]{16,64}$/.test(userHash)) return notFound();
-  const [data, profile] = await Promise.all([
+  const [data, profile, devices] = await Promise.all([
     userRollup(session.mspId, userHash, days),
     userProfile(session.mspId, userHash, days),
+    userDeviceSecurity(session.mspId, userHash, days),
   ]);
   const label = data.byUser[0]?.label ?? profile?.userLabel ?? userHash.slice(0, 10);
   return (
@@ -58,6 +69,11 @@ export default async function ZipaxDev({
       </section>
 
       <section className="panel">
+        <div className="panel-head"><h2>Laptop security</h2></div>
+        <DeviceSecurityTable devices={devices} />
+      </section>
+
+      <section className="panel">
         <div className="panel-head"><h2>Tools used</h2></div>
         <GroupTable rows={data.byTool} nameHeader="Tool" emptyMsg="Nothing yet." />
       </section>
@@ -66,6 +82,47 @@ export default async function ZipaxDev({
         <GroupTable rows={data.byProject} nameHeader="Project" emptyMsg="No projects yet." />
       </section>
     </>
+  );
+}
+
+function DeviceSecurityTable({ devices }: { devices: DeviceSecurity[] }) {
+  if (devices.length === 0) {
+    return (
+      <div className="panel-body">
+        <p className="empty">
+          No Zinloop scan has reported for this developer&rsquo;s device(s) yet. Run{" "}
+          <code>zinloop</code> on the laptop to connect its security posture here.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="panel-body">
+      <table className="data">
+        <thead>
+          <tr>
+            <th>Device</th>
+            <th>Risk</th>
+            <th className="num">High</th>
+            <th className="num">Medium</th>
+            <th className="num">Low</th>
+            <th>Last scan</th>
+          </tr>
+        </thead>
+        <tbody>
+          {devices.map((d) => (
+            <tr key={d.deviceId}>
+              <td><Link href={`/app/devices/${d.deviceId}`}>{d.hostname}</Link></td>
+              <td><span className={`pill ${d.worst}`}>{severityLabel(d.worst)}</span></td>
+              <td className="num">{d.high || <span className="muted">—</span>}</td>
+              <td className="num">{d.medium || <span className="muted">—</span>}</td>
+              <td className="num">{d.low || <span className="muted">—</span>}</td>
+              <td className="muted small">{d.lastScan ? d.lastScan.slice(0, 10) : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

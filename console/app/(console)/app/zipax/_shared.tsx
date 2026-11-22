@@ -3,7 +3,43 @@
 // a page module.
 
 import Link from "next/link";
-import { allTokens, fmtTokens, fmtUsd, type GroupTotal } from "@/lib/zipax.ts";
+import { allTokens, fmtTokens, fmtUsd, type GroupTotal, type UserSecurity } from "@/lib/zipax.ts";
+
+/**
+ * A developer's laptop security posture, as a severity pill: "4 high",
+ * "1 low", or "Clean". Links to the most severe device when one is known.
+ * Renders a muted dash when the developer has no scanned device yet, so the
+ * Zipax surfaces never imply a clean laptop we simply haven't scanned.
+ */
+export function SecurityBadge({
+  sec,
+  linkBase = "/app/devices",
+}: {
+  sec: UserSecurity | null | undefined;
+  linkBase?: string;
+}) {
+  if (!sec || sec.devices === 0) {
+    return <span className="muted small" title="No scan reported for this developer's device yet">—</span>;
+  }
+  const tier = sec.worst === "high" ? sec.high : sec.worst === "medium" ? sec.medium : sec.low;
+  const label = sec.worst === "none" ? "Clean" : `${tier} ${sec.worst}`;
+  const title =
+    sec.worst === "none"
+      ? `No findings across ${sec.devices} device${sec.devices === 1 ? "" : "s"}`
+      : `${sec.high} high · ${sec.medium} medium · ${sec.low} low across ${sec.devices} device${sec.devices === 1 ? "" : "s"}`;
+  const pill = (
+    <span className={`pill ${sec.worst}`} title={title}>
+      {label}
+    </span>
+  );
+  return sec.linkDeviceId ? (
+    <Link href={`${linkBase}/${sec.linkDeviceId}`} style={{ textDecoration: "none", color: "inherit" }}>
+      {pill}
+    </Link>
+  ) : (
+    pill
+  );
+}
 
 export function GroupTable({
   rows,

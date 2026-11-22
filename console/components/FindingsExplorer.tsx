@@ -5,13 +5,13 @@ import type { Client, Severity } from "@/lib/types.ts";
 import { RiskPill } from "@/components/RiskPill.tsx";
 
 type Row={key:string; clientId:string;clientName:string;agentName:string;host:string;app:string;source:string;rule:string;severity:Severity;title:string;detail:string;fix:string};
-export function FindingsExplorer({clients}:{clients:Client[]}) {
+export function FindingsExplorer({clients,initialSeverity="all"}:{clients:Client[];initialSeverity?:string}) {
   const rows=useMemo(()=>clients.flatMap(c=>c.agents.flatMap(a=>a.findings.map((f,i)=>({
     key:c.id+"/"+a.id+"/"+i,clientId:c.id,clientName:c.name,agentName:a.name,host:a.location,app:a.app,source:a.source,
     rule:f.ruleId,severity:f.severity,title:f.title,detail:f.detail,fix:f.fix
   })))),[clients]);
   const [q,setQ]=useState("");
-  const [sev,setSev]=useState("all");
+  const [sev,setSev]=useState(initialSeverity);
   const [client,setClient]=useState("all");
   const [selected,setSelected]=useState<string|null>(null);
   const filtered=useMemo(()=>rows.filter(r=>

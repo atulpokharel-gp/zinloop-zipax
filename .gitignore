@@ -1,1 +1,5 @@
 .env
+
+# Secrets: downloaded OAuth client credentials, never commit
+key/
+*client_secret*.json
