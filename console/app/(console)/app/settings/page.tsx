@@ -6,6 +6,7 @@ import { listSessions } from "@/lib/auth.ts";
 import { hasDatabase } from "@/lib/db.ts";
 import { requireSession } from "@/lib/session.ts";
 import { revokeInviteAction } from "./actions.ts";
+import { MailStatus } from "./MailStatus.tsx";
 import { ChangePassword, EmailPrefsForm, InviteForm, RemoveMember, RequireMfa, TwoFactor } from "./SettingsForms.tsx";
 import { SessionsPanel } from "@/components/SessionsPanel.tsx";
 import { MicrosoftLinkPanel } from "@/components/MicrosoftLinkPanel.tsx";
@@ -44,6 +45,8 @@ export default async function Settings({ searchParams }: { searchParams: Promise
       {sp.owner === "required" && (
         <section className="warning" role="alert"><p>Only the account owner can do that.</p></section>
       )}
+
+      <MailStatus mspId={s.mspId} isOwner={isOwner} />
 
       <section className="panel">
         <div className="panel-head"><h2>Plan</h2></div>

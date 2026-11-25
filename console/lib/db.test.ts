@@ -47,6 +47,7 @@ import { checkHealth } from "./health.ts";
 import { getMicrosoftLink, linkMicrosoft, signInWithGoogle, signInWithMicrosoft, signUpWithGoogle, unlinkMicrosoft } from "./identities.ts";
 import { sendPending, type Mail } from "../scripts/send-mail.ts";
 import { checkAlerts, unsubscribeUrl } from "./alerts.ts";
+import { createRecoveryLink, mailStatus, recentOutbox, RecoveryError, tenantMailStatus } from "./mail-status.ts";
 import {
   connectM365,
   createClient,
@@ -657,6 +658,50 @@ describe("database", { skip: !adminUrl && "set TEST_DATABASE_ADMIN_URL to run" }
     const delivered = sent.find((m) => m.to === "reset-owner@mail.example" && m.subject.includes("Reset"))!;
     assert.ok(delivered, "the reset email was delivered");
     assert.ok(!delivered.headers?.["List-Unsubscribe"], "no unsubscribe header on a reset email");
+    delete process.env.CONSOLE_URL;
+  });
+
+  test("superadmin can see outbox state and mint a rescue reset link when SMTP is off", async () => {
+    process.env.CONSOLE_URL = "https://app.example";
+    const ownerToken = await signUp({ name: "Lost Owner", mspName: "Rescue IT", email: "lost@mail.example", password: "original password here" });
+    const s = (await checkSession(ownerToken))!;
+    // Queue a real reset email the normal way so the outbox has a row.
+    await requestPasswordReset("lost@mail.example");
+
+    const status = await mailStatus();
+    assert.ok(status.pending >= 1, "the queued reset shows up in the cross-tenant count");
+    assert.ok(status.byKind.reset >= 1);
+
+    const recent = await recentOutbox(10);
+    assert.ok(recent.some((r) => r.toEmail === "lost@mail.example" && r.kind === "reset"));
+
+    // Rescue link: unknown address fails cleanly without leaking.
+    await assert.rejects(createRecoveryLink("nobody@mail.example"), (e: Error) => e instanceof RecoveryError);
+
+    // Rescue link for a real user: a working one-time URL, and any earlier
+    // reset for that user is invalidated so one owner has one live link.
+    const first = await createRecoveryLink("LOST@mail.example");
+    assert.equal(first.email, "lost@mail.example");
+    assert.equal(first.mspName, "Rescue IT");
+    const token = first.url.match(/\/reset\/(zlp_[A-Za-z0-9_-]+)$/)![1];
+    assert.deepEqual(await checkResetToken(token), { email: "lost@mail.example", mspName: "Rescue IT" });
+
+    // A second rescue invalidates the first one — one live rescue per user.
+    const second = await createRecoveryLink("lost@mail.example");
+    assert.equal(await checkResetToken(token), null, "the first rescue link is dead once a second is minted");
+    const token2 = second.url.match(/\/reset\/(zlp_[A-Za-z0-9_-]+)$/)![1];
+    assert.notEqual(token, token2);
+
+    // Setting the new password through the rescue link works end-to-end.
+    await resetPassword(token2, "a brand new password after rescue");
+    assert.equal((await signIn("lost@mail.example", "a brand new password after rescue")).kind, "session");
+    assert.equal(await checkResetToken(token2), null, "a used rescue link can't be reused");
+
+    // Per-tenant status for the Settings warning.
+    await requestPasswordReset("lost@mail.example");
+    const tenant = await tenantMailStatus(s.mspId);
+    assert.ok(tenant.pending >= 1);
+    assert.equal(tenant.configured, Boolean(process.env.SMTP_URL && process.env.MAIL_FROM));
     delete process.env.CONSOLE_URL;
   });
 
