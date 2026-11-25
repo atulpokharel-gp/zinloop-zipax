@@ -502,7 +502,7 @@ The native console uses **Next.js + PostgreSQL** and migrations under `console/d
 | `CRON_SECRET` | Protect scheduled job endpoints where configured |
 | `M365_CLIENT_ID` / `M365_CLIENT_SECRET` | Optional Microsoft 365 integration |
 | `SSO_CLIENT_ID` / `SSO_CLIENT_SECRET` | Optional separate Microsoft work-account sign-in |
-| `SMTP_URL` / `MAIL_FROM` | Email, invitation and alert delivery when configured |
+| `SMTP_URL` / `MAIL_FROM` | Email, invitation and alert delivery (see "Turning on email delivery" below) |
 | `DOWNLOAD_BASE_URL` | Optional override for release asset download redirects |
 | `ZINLOOP_URL` | SDK: URL of configured native control plane |
 | `ZINLOOP_ENROLLMENT_TOKEN` / `ZINLOOP_AGENT_TOKEN` | SDK: initial enrollment / registered runtime credential |
@@ -516,6 +516,21 @@ Deploy choices:
 - **Optional upstream Agent Control:** [deploy/agent-control/README.md](deploy/agent-control/README.md). This pulls upstream images, exposes a *separate* dashboard/API and uses a *separate* database. It is **not** federated with native Zinloop.
 
 Do not assume the upstream Agent Control Docker deployment automatically supplies native MSP policies, agents or events. Avoid putting staging and production on the same database.
+
+### Turning on email delivery
+
+Invites, password resets and security alerts all go through a per-tenant outbox and a cron job (`/api/cron/mail`, every 5 minutes on Vercel). Without `SMTP_URL` and `MAIL_FROM` the cron silently skips, so the outbox fills up and nothing is delivered — the forgot-password page will still say "we've emailed a link" because the server does queue one.
+
+To turn it on in production (Vercel example, Resend as the SMTP provider — any provider that speaks SMTP works):
+
+```bash
+# One-time: get an API key from resend.com and verify the sending domain.
+vercel env add SMTP_URL production     # value: smtps://resend:re_xxx@smtp.resend.com:465
+vercel env add MAIL_FROM production    # value: Zinloop Security <alerts@zinloop.com>
+vercel --prod                           # redeploy so the cron picks them up
+```
+
+On the next 5-minute tick the cron drains the outbox. To monitor delivery and rescue a locked-out customer while SMTP is off, sign in to `/superadmin` and open **Email delivery** — it shows the queue state and lets a platform operator mint a one-time password-reset link that can be sent by hand.
 
 ## Testing, development and operations
 

@@ -7,9 +7,14 @@ export function ForgotForm() {
   const [state, action, pending] = useActionState<ForgotState, FormData>(forgotAction, {});
   if (state.done) {
     return (
-      <p className="zok" role="status">
-        If an account exists for <b>{state.email}</b>, we&apos;ve emailed a link to set a new password. It expires in an hour. Check your spam folder if it doesn&apos;t arrive.
-      </p>
+      <div className="zok" role="status">
+        <p>
+          If an account exists for <b>{state.email}</b>, we&apos;ve started a password reset. The link expires in an hour. Check your spam folder if it doesn&apos;t arrive.
+        </p>
+        <p className="small">
+          Still locked out after a few minutes? Email <a href="mailto:support@zinloop.com">support@zinloop.com</a> from the same address and we&apos;ll send the link by hand.
+        </p>
+      </div>
     );
   }
   return (

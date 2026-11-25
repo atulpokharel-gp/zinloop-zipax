@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { listCompanies, listPlatformUsers, platformStats, registrationTrend, requireSuperadmin } from "@/lib/superadmin.ts";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +19,7 @@ export default async function SuperadminDashboard() {
 
   return (
     <>
+      <nav className="sa-nav"><Link href="/superadmin/mail">Email delivery →</Link></nav>
       <h1>Platform overview</h1>
       <p className="sub">Every company and user across Zinloop. Read-only.</p>
 
