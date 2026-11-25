@@ -60,6 +60,14 @@ create function superadmin_outbox_recent(p_limit int default 50)
 -- Looks up a user by email across every tenant (there can only be one; the
 -- users table has a unique index on email). Returns the id and company so the
 -- rescue flow can audit who changed what.
+-- The reset-check select and expiring-row cleanup already have owner policies
+-- on password_resets; the rescue flow also inserts a new row, which the owner
+-- needs an explicit policy for (RLS applies to SECURITY DEFINER functions too).
+do $$
+begin
+  execute format('create policy owner_rescue on password_resets for insert to %I with check (true)', current_user);
+end $$;
+
 create function superadmin_user_by_email(p_email text)
   returns table (user_id uuid, msp_id uuid, email text, msp_name text, name text)
   language sql stable security definer set search_path = public as $$
